@@ -16,7 +16,11 @@ end
 
 function InternetArchive.search(query, limit)
     limit = limit or 20
-    local q = url_escape(string.format("(%s) AND mediatype:texts", query))
+    -- Constrain to text items that actually ship an EPUB, so every result in the
+    -- list is downloadable (advancedsearch otherwise matches all metadata and
+    -- returns plenty of EPUB-less noise).
+    local q = url_escape(string.format(
+        "(%s) AND mediatype:texts AND format:(EPUB)", query))
     local url = string.format(
         "https://archive.org/advancedsearch.php?q=%s"
         .. "&fl[]=identifier&fl[]=title&fl[]=creator"
