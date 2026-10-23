@@ -31,6 +31,17 @@ function Settings.toggle(name)
     Settings.setEnabled(name, not Settings.isEnabled(name))
 end
 
+function Settings.coversEnabled()
+    local v = s():readSetting("covers_enabled")
+    if v == nil then return true end   -- covers on by default
+    return v
+end
+
+function Settings.setCoversEnabled(on)
+    s():saveSetting("covers_enabled", on and true or false)
+    s():flush()
+end
+
 -- Build an {["Source"]=true} set of enabled sources from a list of all names.
 function Settings.enabledSet(allNames)
     local set = {}

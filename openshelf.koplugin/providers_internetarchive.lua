@@ -37,6 +37,7 @@ function InternetArchive.search(query, limit)
                 title  = first(doc.title) or identifier,
                 author = first(doc.creator) or "Unknown",
                 source = InternetArchive.name,
+                cover  = "https://archive.org/services/img/" .. identifier,
                 resolve = function()
                     local meta = HttpUtil.getJSON(
                         "https://archive.org/metadata/" .. identifier)

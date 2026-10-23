@@ -40,6 +40,16 @@ local function pick_bitstream(item)
     return nil
 end
 
+-- Cover thumbnail: DSpace puts generated thumbnails in the THUMBNAIL bundle.
+local function pick_cover(item)
+    for _, b in ipairs(item.bitstreams or {}) do
+        if b.bundleName == "THUMBNAIL" and b.retrieveLink then
+            return BASE .. b.retrieveLink
+        end
+    end
+    return nil
+end
+
 function DOAB.search(query, limit)
     limit = limit or 20
     local url = BASE .. "/rest/search?expand=metadata,bitstreams&query="
@@ -59,6 +69,7 @@ function DOAB.search(query, limit)
                     author = meta_value(item, "dc.contributor.author") or "Unknown",
                     source = DOAB.name,
                     format = fmt,
+                    cover  = pick_cover(item),
                     resolve = function() return href end,
                 }
                 if #results >= limit then break end

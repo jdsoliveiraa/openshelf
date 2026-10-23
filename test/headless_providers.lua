@@ -130,5 +130,34 @@ end
 try_download("Project Gutenberg")
 hr()
 
+-- validate cover thumbnail URLs return real image bytes (decode happens in
+-- KOReader via RenderImage; here we just confirm the URL + image magic)
+local function image_kind(bytes)
+    if not bytes or #bytes < 4 then return nil end
+    local b1, b2, b3, b4 = bytes:byte(1, 4)
+    if b1 == 0xFF and b2 == 0xD8 then return "JPEG" end
+    if b1 == 0x89 and b2 == 0x50 and b3 == 0x4E and b4 == 0x47 then return "PNG" end
+    if bytes:sub(1, 3) == "GIF" then return "GIF" end
+    return nil
+end
+
+local function check_cover(src)
+    local r = by_source[src] and by_source[src][1]
+    if not r then print(("cover SKIP [%s] (no result)"):format(src)); return end
+    if not r.cover_url then print(("cover SKIP [%s] (no cover_url)"):format(src)); return end
+    local body = HttpUtil.getBody(r.cover_url)
+    local kind = image_kind(body)
+    if kind then
+        print(("cover OK   [%s] %d bytes %s  <- %s"):format(src, #body, kind, r.cover_url))
+    else
+        fail = true
+        print(("cover FAIL [%s] not an image  <- %s"):format(src, tostring(r.cover_url)))
+    end
+end
+
+check_cover("Project Gutenberg")
+check_cover("Internet Archive")
+hr()
+
 print("RESULT: " .. (fail and "FAIL" or "PASS"))
 os.exit(fail and 1 or 0)

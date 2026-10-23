@@ -95,14 +95,22 @@ lua test/headless_providers.lua "pride and prejudice"
 
 Exits non-zero on failure. DOAB's 403 from datacenter IPs is treated as expected.
 
+## Cover thumbnails
+
+Results show cover thumbnails in a custom paged view (`coverbrowser.lua`) —
+the base KOReader Menu is text-only, so covers needed a dedicated widget. Covers
+are downloaded + decoded (`covers.lua` via `RenderImage`) and cached per session.
+Providers supply `cover_url`: Gutenberg (`image/jpeg`), Internet Archive
+(`/services/img/<id>`), DOAB (THUMBNAIL bitstream). A **Show cover thumbnails**
+toggle in the menu falls back to the plain text list.
+
 ## Roadmap
 
 - [ ] Standard Ebooks via **authenticated OPDS** (opt-in, patron token)
 - [ ] **Discovery bridge**: surface borrow (library) / buy availability as
       `borrow`/`buy` entries that deep-link to the Kobo/Libby app (no DRM in-app)
-- [ ] Cover thumbnails in results
+- [ ] Async cover loading (currently fetched synchronously per page)
 - [ ] Format choice when an item has several (EPUB / PDF)
-- [ ] Paging / "load more"
 - [ ] "Already in library" badges
 
 ## License

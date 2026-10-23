@@ -26,6 +26,7 @@ function Gutendex.search(query, limit)
                 title  = book.title,
                 author = author,
                 source = Gutendex.name,
+                cover  = book.formats and book.formats["image/jpeg"],
                 resolve = function() return epub end,
             }
             if #results >= limit then break end

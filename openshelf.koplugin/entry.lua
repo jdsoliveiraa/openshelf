@@ -77,6 +77,7 @@ function Entry.makeKey(title, author)
 end
 
 -- Build a DOWNLOAD entry. `resolve` returns (url) or (nil, err).
+-- `cover` is an optional thumbnail image URL.
 function Entry.download(t)
     return {
         title    = t.title or "Untitled",
@@ -86,6 +87,7 @@ function Entry.download(t)
         format   = t.format or "epub",
         quality  = t.quality or Entry.QUALITY[t.source] or 0,
         dedup_key = Entry.makeKey(t.title, t.author),
+        cover_url = t.cover,
         resolve  = t.resolve,
     }
 end

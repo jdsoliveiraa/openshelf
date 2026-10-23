@@ -16,6 +16,7 @@ Network work is wrapped in Trapper so the UI shows a spinner and stays responsiv
 local Catalog = require("catalog")
 local Downloader = require("downloader")
 local Settings = require("settings")
+local CoverBrowser = require("coverbrowser")
 local ConfirmBox = require("ui/widget/confirmbox")
 local InfoMessage = require("ui/widget/infomessage")
 local InputDialog = require("ui/widget/inputdialog")
@@ -53,6 +54,14 @@ function OpenShelf:mainMenu()
         {
             text = _("Sources"),
             sub_item_table_func = function() return self:sourcesMenu() end,
+        },
+        {
+            text = _("Show cover thumbnails"),
+            checked_func = function() return Settings.coversEnabled() end,
+            callback = function()
+                Settings.setCoversEnabled(not Settings.coversEnabled())
+            end,
+            keep_menu_open = true,
         },
         {
             text = _("About OpenShelf"),
@@ -139,6 +148,34 @@ end
 -- Results (grouped by action)
 ---------------------------------------------------------------------------
 function OpenShelf:showResults(query, entries, errors, collapsed)
+    if Settings.coversEnabled() then
+        self:showResultsCovers(query, entries)
+    else
+        self:showResultsText(query, entries, errors, collapsed)
+    end
+end
+
+-- Cover-thumbnail results view (custom widget).
+function OpenShelf:showResultsCovers(query, entries)
+    local groups = Catalog.group(entries)
+    local browser
+    browser = CoverBrowser:new{
+        results_title = T(_("“%1” — %2 results"), query, #entries),
+        groups = groups,
+        on_select = function(entry)
+            UIManager:close(browser)
+            if entry.action == "download" then
+                self:confirmDownload(entry)
+            else
+                self:showHandoff(entry)
+            end
+        end,
+    }
+    UIManager:show(browser)
+end
+
+-- Plain text results view (fallback when cover thumbnails are off).
+function OpenShelf:showResultsText(query, entries, errors, collapsed)
     local menu
     local items = {}
     local groups = Catalog.group(entries)
