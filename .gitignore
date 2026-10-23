@@ -1,0 +1,13 @@
+# Lua
+*.luac
+
+# Editor / OS cruft
+.DS_Store
+*.swp
+*~
+.vscode/
+.idea/
+
+# Local test output
+/tmp/
+*.epub
