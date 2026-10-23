@@ -1,6 +1,6 @@
 --[[
 Resolves a catalog entry to a URL and streams it into the OpenShelf library
-folder (under KOReader's data dir). Filenames are sanitized "Author - Title.epub".
+folder (under KOReader's data dir). Filename: "Author - Title.<format>".
 --]]
 local DataStorage = require("datastorage")
 local HttpUtil = require("http_util")
@@ -32,7 +32,8 @@ function Downloader.download(entry)
     end
     local base = sanitize(string.format("%s - %s",
         entry.author or "Unknown", entry.title or "book"))
-    local target = ("%s/%s.epub"):format(Downloader.getDir(), base)
+    local ext = entry.format or "epub"
+    local target = ("%s/%s.%s"):format(Downloader.getDir(), base, ext)
     return HttpUtil.download(url, target)
 end
 

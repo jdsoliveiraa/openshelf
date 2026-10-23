@@ -1,8 +1,9 @@
 --[[
 Project Gutenberg provider, via the Gutendex JSON API (https://gutendex.com).
-~70k public-domain books with direct EPUB links — no per-item resolve needed.
+~70k public-domain books with direct EPUB links.
 --]]
 local HttpUtil = require("http_util")
+local Entry = require("entry")
 local url_escape = require("socket.url").escape
 
 local Gutendex = { name = "Project Gutenberg" }
@@ -21,13 +22,12 @@ function Gutendex.search(query, limit)
             if book.authors and book.authors[1] then
                 author = book.authors[1].name
             end
-            table.insert(results, {
-                title = book.title or "Untitled",
+            results[#results + 1] = Entry.download{
+                title  = book.title,
                 author = author,
                 source = Gutendex.name,
-                -- direct link; resolve() is trivial for this provider
                 resolve = function() return epub end,
-            })
+            }
             if #results >= limit then break end
         end
     end

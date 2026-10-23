@@ -1,10 +1,11 @@
 --[[
 Internet Archive provider.
-Search uses the advancedsearch API (returns item identifiers); the actual EPUB
-filename is only known per-item, so resolve() lazily hits the metadata API when
-the user picks a result — keeps search fast and avoids N calls up front.
+Search uses advancedsearch (returns identifiers); the EPUB filename is only known
+per-item, so resolve() lazily hits the metadata API when the user picks a result.
+Constrained to text items that actually ship an EPUB.
 --]]
 local HttpUtil = require("http_util")
+local Entry = require("entry")
 local url_escape = require("socket.url").escape
 
 local InternetArchive = { name = "Internet Archive" }
@@ -16,9 +17,6 @@ end
 
 function InternetArchive.search(query, limit)
     limit = limit or 20
-    -- Constrain to text items that actually ship an EPUB, so every result in the
-    -- list is downloadable (advancedsearch otherwise matches all metadata and
-    -- returns plenty of EPUB-less noise).
     local q = url_escape(string.format(
         "(%s) AND mediatype:texts AND format:(EPUB)", query))
     local url = string.format(
@@ -35,8 +33,8 @@ function InternetArchive.search(query, limit)
     for _, doc in ipairs(docs) do
         local identifier = doc.identifier
         if identifier then
-            table.insert(results, {
-                title = first(doc.title) or identifier,
+            results[#results + 1] = Entry.download{
+                title  = first(doc.title) or identifier,
                 author = first(doc.creator) or "Unknown",
                 source = InternetArchive.name,
                 resolve = function()
@@ -59,7 +57,7 @@ function InternetArchive.search(query, limit)
                     return string.format("https://archive.org/download/%s/%s",
                         identifier, url_escape(epub))
                 end,
-            })
+            }
         end
     end
     return results
