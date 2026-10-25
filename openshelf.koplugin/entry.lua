@@ -13,6 +13,7 @@ Entry shape:
     format  = "epub" | "pdf" | ...  -- display + download extension
     quality = number,               -- higher wins when deduping editions
     dedup_key = string,             -- normalized title+author signature
+    cover_url = string | nil,       -- thumbnail image URL
     resolve = function() -> url[, err]   -- DOWNLOAD: where to fetch the file
     -- BORROW/BUY (future) carry handoff info instead of resolve:
     -- where = string, info = string
@@ -35,38 +36,38 @@ Entry.ACTION_HEADING = {
 }
 
 -- Per-source quality rank. Higher = preferred when the same title appears in
--- several sources (prefer-best-edition). Tune freely.
+-- several sources (prefer-best-edition). Tune freely. Standard Ebooks is listed
+-- ahead of time for the planned authenticated-OPDS provider.
 Entry.QUALITY = {
     ["Standard Ebooks"]   = 100,
     ["Project Gutenberg"] = 80,
-    ["Feedbooks"]         = 70,
     ["Internet Archive"]  = 60,
     ["DOAB"]              = 50,
 }
 
 local ARTICLES = { ["the"] = true, ["a"] = true, ["an"] = true }
 
-local function strip_accents(s)
-    -- best-effort: drop combining marks is overkill; just lowercase here.
-    return s:lower()
-end
+-- In LuaJIT (C locale) %w / %a only match ASCII. Bytes >= 128 are UTF-8 lead or
+-- continuation bytes; keeping them intact means "Misérables" stays one token
+-- instead of degrading to "mis rables". Accents are NOT folded (é ~= e), which is
+-- fine: all providers hand back the same accented spelling.
+local WORD_BYTE = "[%a\128-\255]"
 
--- Normalize a title: lowercase, drop a leading article, keep alphanumerics.
+-- Normalize a title: lowercase, drop a leading article, keep letters/digits.
 local function norm_title(title)
-    local t = strip_accents(title or "")
-    t = t:gsub("[^%w%s]", " "):gsub("%s+", " "):gsub("^%s+", ""):gsub("%s+$", "")
+    local t = (title or ""):lower()
+    t = t:gsub("[^%w%s\128-\255]", " "):gsub("%s+", " "):gsub("^%s+", ""):gsub("%s+$", "")
     local first, rest = t:match("^(%w+)%s+(.*)$")
     if first and ARTICLES[first] then t = rest end
     return t
 end
 
--- Author signature: sorted unique lowercase tokens (len>=2) so that
+-- Author signature: sorted unique lowercase tokens (2+ bytes) so that
 -- "Doyle, Arthur Conan" and "Arthur Conan Doyle" collapse to the same key.
 local function author_sig(author)
-    local toks = {}
-    local seen = {}
-    for w in strip_accents(author or ""):gmatch("%a%a+") do
-        if not seen[w] then seen[w] = true; toks[#toks+1] = w end
+    local toks, seen = {}, {}
+    for w in (author or ""):lower():gmatch(WORD_BYTE .. WORD_BYTE .. "+") do
+        if not seen[w] then seen[w] = true; toks[#toks + 1] = w end
     end
     table.sort(toks)
     return table.concat(toks, " ")

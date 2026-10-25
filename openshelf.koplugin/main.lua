@@ -6,9 +6,12 @@ UI map:
   Main menu ▸ OpenShelf
     ├─ Search free ebooks          -> search dialog -> grouped results
     ├─ Sources                     -> per-provider on/off toggles
+    ├─ Show cover thumbnails       -> cover view (default) / plain text list
     └─ About
-  Results view (grouped by action):
-    ⬇ Download  -> confirm -> download (progress) -> read
+  Results view (grouped by action; both views end with the same footer note for
+  merged duplicates + source errors, tap it for details):
+    ⬇ Download  -> confirm (or "already downloaded": open / re-download)
+                   -> download (progress) -> read
     📚 Borrow / 🛒 Buy             -> reserved; handoff info (no sources yet)
 
 Network work is wrapped in Trapper so the UI shows a spinner and stays responsive.
@@ -17,6 +20,7 @@ local Catalog = require("catalog")
 local Downloader = require("downloader")
 local Settings = require("settings")
 local CoverBrowser = require("coverbrowser")
+local Version = require("version")
 local ConfirmBox = require("ui/widget/confirmbox")
 local InfoMessage = require("ui/widget/infomessage")
 local InputDialog = require("ui/widget/inputdialog")
@@ -68,7 +72,10 @@ function OpenShelf:mainMenu()
             keep_menu_open = true,
             callback = function()
                 UIManager:show(InfoMessage:new{
-                    text = _("OpenShelf\n\nSearch free & public-domain ebook catalogs and download them on-device.\n\nSources: Standard Ebooks, Project Gutenberg, Feedbooks, Internet Archive, DOAB.\n\nOnly DRM-free, openly-licensed books are downloaded in-app."),
+                    text = T(_("OpenShelf %1\n\nSearch free & public-domain ebook catalogs and download them on-device.\n\nSources: %2\n\nBooks are saved to:\n%3\n\nOnly DRM-free, openly-licensed books are downloaded in-app."),
+                        Version,
+                        table.concat(Catalog.providerNames(), ", "),
+                        Downloader.dirPath()),
                 })
             end,
         },
@@ -80,7 +87,7 @@ end
 ---------------------------------------------------------------------------
 function OpenShelf:sourcesMenu()
     local items = {}
-    for _, name in ipairs(Catalog.providerNames()) do
+    for __, name in ipairs(Catalog.providerNames()) do
         items[#items + 1] = {
             text = name,
             checked_func = function() return Settings.isEnabled(name) end,
@@ -147,21 +154,42 @@ end
 ---------------------------------------------------------------------------
 -- Results (grouped by action)
 ---------------------------------------------------------------------------
+
+-- Footer shared by both results views: merged duplicates + source errors.
+-- Returns (note, detail) — note is the one-liner, detail what a tap shows —
+-- or nil when there is nothing to report.
+local function resultNotes(errors, collapsed)
+    local notes = {}
+    if collapsed and collapsed > 0 then
+        notes[#notes + 1] = T(_("%1 duplicate edition(s) merged"), collapsed)
+    end
+    if errors and #errors > 0 then
+        notes[#notes + 1] = T(_("⚠ %1 source(s) errored — tap for details"), #errors)
+    end
+    if #notes == 0 then return nil end
+    local detail = (errors and #errors > 0)
+        and (_("Sources that errored:") .. "\n\n" .. table.concat(errors, "\n"))
+        or _("No source errors.")
+    return table.concat(notes, "   ·   "), detail
+end
+
 function OpenShelf:showResults(query, entries, errors, collapsed)
     if Settings.coversEnabled() then
-        self:showResultsCovers(query, entries)
+        self:showResultsCovers(query, entries, errors, collapsed)
     else
         self:showResultsText(query, entries, errors, collapsed)
     end
 end
 
 -- Cover-thumbnail results view (custom widget).
-function OpenShelf:showResultsCovers(query, entries)
-    local groups = Catalog.group(entries)
+function OpenShelf:showResultsCovers(query, entries, errors, collapsed)
+    local note, detail = resultNotes(errors, collapsed)
     local browser
     browser = CoverBrowser:new{
         results_title = T(_("“%1” — %2 results"), query, #entries),
-        groups = groups,
+        groups = Catalog.group(entries),
+        footer_note = note,
+        footer_detail = detail,
         on_select = function(entry)
             UIManager:close(browser)
             if entry.action == "download" then
@@ -180,14 +208,14 @@ function OpenShelf:showResultsText(query, entries, errors, collapsed)
     local items = {}
     local groups = Catalog.group(entries)
 
-    for _, group in ipairs(groups) do
+    for __, group in ipairs(groups) do
         -- group header (non-selectable)
         items[#items + 1] = {
             text = T("%1  (%2)", group.heading, #group.items),
             bold = true,
             enabled_func = function() return false end,
         }
-        for _, entry in ipairs(group.items) do
+        for ___, entry in ipairs(group.items) do
             local e = entry
             items[#items + 1] = {
                 text = T("%1 — %2", e.title, e.author or _("Unknown")),
@@ -204,24 +232,14 @@ function OpenShelf:showResultsText(query, entries, errors, collapsed)
         end
     end
 
-    -- footer note: collapsed duplicates + source errors
-    local notes = {}
-    if collapsed and collapsed > 0 then
-        notes[#notes + 1] = T(_("%1 duplicate edition(s) merged"), collapsed)
-    end
-    if errors and #errors > 0 then
-        notes[#notes + 1] = T(_("⚠ %1 source(s) errored — tap for details"), #errors)
-    end
-    if #notes > 0 then
+    local note, detail = resultNotes(errors, collapsed)
+    if note then
         items[#items + 1] = {
-            text = table.concat(notes, "   ·   "),
+            text = note,
             dim = true,
             keep_menu_open = true,
             callback = function()
-                local msg = (errors and #errors > 0)
-                    and (_("Sources that errored:") .. "\n\n" .. table.concat(errors, "\n"))
-                    or _("No source errors.")
-                UIManager:show(InfoMessage:new{ text = msg })
+                UIManager:show(InfoMessage:new{ text = detail })
             end,
         }
     end
@@ -241,6 +259,21 @@ end
 -- Download → read
 ---------------------------------------------------------------------------
 function OpenShelf:confirmDownload(entry)
+    local existing = Downloader.exists(entry)
+    if existing then
+        UIManager:show(ConfirmBox:new{
+            text = T(_("Already downloaded:\n%1\n\nOpen it?"), existing),
+            ok_text = _("Open"),
+            ok_callback = function() self:openBook(existing) end,
+            other_buttons = {{
+                {
+                    text = _("Download again"),
+                    callback = function() self:doDownload(entry) end,
+                },
+            }},
+        })
+        return
+    end
     UIManager:show(ConfirmBox:new{
         text = T(_("Download “%1”?\n\nBy: %2\nFrom: %3  (%4)"),
             entry.title, entry.author or _("Unknown"),
@@ -265,12 +298,14 @@ function OpenShelf:doDownload(entry)
         UIManager:show(ConfirmBox:new{
             text = T(_("Saved to:\n%1\n\nOpen now?"), path),
             ok_text = _("Read"),
-            ok_callback = function()
-                local ReaderUI = require("apps/reader/readerui")
-                ReaderUI:showReader(path)
-            end,
+            ok_callback = function() self:openBook(path) end,
         })
     end)
+end
+
+function OpenShelf:openBook(path)
+    local ReaderUI = require("apps/reader/readerui")
+    ReaderUI:showReader(path)
 end
 
 ---------------------------------------------------------------------------

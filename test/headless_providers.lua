@@ -3,18 +3,22 @@ Headless test for OpenShelf: runs the REAL plugin code (catalog, dedupe, opds,
 providers, http_util) against the live APIs, stubbing only the KOReader-specific
 modules (json, socketutil, logger).
 
-Requirements (once):
-    brew install lua luarocks
-    luarocks install luasocket luasec dkjson
+Requirements (once) — rocks built for LuaJIT, i.e. the device's Lua 5.1 ABI:
+    brew install luajit luarocks luacheck
+    LJ="$(brew --prefix luajit)"
+    luarocks --lua-version=5.1 --lua-dir="$LJ" install luasocket
+    luarocks --lua-version=5.1 --lua-dir="$LJ" install dkjson
+    luarocks --lua-version=5.1 --lua-dir="$LJ" install luasec OPENSSL_DIR="$(brew --prefix openssl@3)"
 
 Run:
-    eval "$(luarocks path)"
-    lua test/headless_providers.lua "pride and prejudice"
+    eval "$(luarocks --lua-version=5.1 path)"
+    luajit test/headless_providers.lua "pride and prejudice"
 
 Notes:
  - DOAB blocks datacenter IPs (403); its failure here is EXPECTED and ignored.
- - Internet Archive EPUBs can be large, so we validate downloads only for
-   Standard Ebooks + Feedbooks + Gutenberg.
+ - Internet Archive EPUBs can be large, so we validate a real download only
+   for Project Gutenberg.
+ - Offline checks (dedup key, query sanitizer, OPDS parser) live in unit.lua.
 --]]
 local this = arg[0]:gsub("[^/]*$", "")
 if this == "" then this = "./" end
@@ -27,11 +31,26 @@ package.preload["json"] = function()
     return { decode = dkjson.decode, encode = dkjson.encode }
 end
 package.preload["socketutil"] = function()
-    return {
+    -- Mirrors the KOReader API http_util relies on; the timeout-aware sinks
+    -- fall back to plain ltn12 ones here.
+    local ltn12 = require("ltn12")
+    local http, https = require("socket.http"), require("ssl.https")
+    local S = {
         LARGE_BLOCK_TIMEOUT = 10, LARGE_TOTAL_TIMEOUT = 30,
         FILE_BLOCK_TIMEOUT = 30, FILE_TOTAL_TIMEOUT = 120,
-        set_timeout = function() end, reset_timeout = function() end,
+        total_timeout = -1,
     }
+    -- LuaSocket's own per-operation timeout is enough to make the
+    -- connection-failure check below meaningful.
+    function S:set_timeout(block, total)
+        http.TIMEOUT, https.TIMEOUT = block, block
+        return block, total
+    end
+    function S:reset_timeout() http.TIMEOUT, https.TIMEOUT = 60, 60 end
+    function S.table_sink(t) return ltn12.sink.table(t) end
+    function S.file_sink(handle) return ltn12.sink.file(handle) end
+    function S.describe_error() return nil end
+    return S
 end
 package.preload["logger"] = function()
     local function w(...) io.stderr:write("[logger] " .. table.concat({...}, " ") .. "\n") end
@@ -157,6 +176,36 @@ end
 
 check_cover("Project Gutenberg")
 check_cover("Internet Archive")
+hr()
+
+-- Internet Archive: punctuation in the query must not break the Lucene syntax
+-- (before v0.4 a stray ":" or "(" silently produced zero results).
+local IA = require("providers_internetarchive")
+local tricky = "dr. jekyll (and) mr: hyde"
+print(("IA sanitizeQuery: %q -> %q"):format(tricky, tostring(IA.sanitizeQuery(tricky))))
+local ia_res, ia_err = IA.search(tricky, 5)
+if ia_res and #ia_res > 0 then
+    print(("IA punctuation query OK   -> %d result(s), first: %s"):format(#ia_res, ia_res[1].title))
+else
+    fail = true
+    print("IA punctuation query FAIL -> " .. tostring(ia_err or "0 results"))
+end
+hr()
+
+-- A dead host must come back as (nil, message) within the block timeout —
+-- exercises the failure path of http_util (no status line, no headers).
+do
+    local t0 = os.time()
+    local body, err = HttpUtil.getBody("http://10.255.255.1:9/", { block_timeout = 3 })
+    local took = os.time() - t0
+    if body == nil and type(err) == "string" and took <= 10 then
+        print(("connection failure OK   -> %q in %ds"):format(err, took))
+    else
+        fail = true
+        print(("connection failure FAIL -> body=%s err=%s took=%ds"):format(
+            tostring(body), tostring(err), took))
+    end
+end
 hr()
 
 print("RESULT: " .. (fail and "FAIL" or "PASS"))

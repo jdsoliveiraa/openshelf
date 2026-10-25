@@ -1,7 +1,7 @@
 --[[
 Minimal OPDS/Atom parser — just enough to pull acquisition entries out of an
-OPDS feed without a full XML library. Used by the Feedbooks provider (and any
-future OPDS source).
+OPDS feed without a full XML library. No provider uses it today; it is kept for
+the planned opt-in authenticated-OPDS source (Standard Ebooks, patron token).
 
 Returns a list of:
   { title=, author=, summary=, links = { {rel=, href=, type=}, ... } }

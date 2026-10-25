@@ -35,6 +35,13 @@ ruled both out:
 > OpenShelf never touches Adobe-DRM'd books (library/purchase). Those stay in the
 > stock Kobo reader. See the roadmap for the planned borrow/buy *discovery bridge*.
 
+## Where books are saved
+
+Downloads go to **`OpenShelf/` at the root of the device** (`/mnt/onboard/OpenShelf`
+on Kobo), a visible folder, so they show up in the stock Kobo library as well as
+in KOReader. Files are named `Author - Title.epub` (or `.pdf`). Picking a book you
+already downloaded offers to open it instead of fetching it again.
+
 ## Architecture
 
 Flat module layout — KOReader puts a plugin's own folder on the Lua path, so
@@ -43,14 +50,17 @@ siblings `require` each other by filename.
 ```
 openshelf.koplugin/
   _meta.lua                     plugin manifest
+  version.lua                   plugin version (User-Agent, About)
   main.lua                      UI: menu, search, grouped results, download/read
   catalog.lua                   fans query across providers → merge → dedupe → group
   entry.lua                     result model: actions (download/borrow/buy), quality, dedup keys
   dedupe.lua                    collapse duplicate editions, prefer best quality
   opds.lua                      minimal OPDS/Atom parser (for future OPDS sources)
-  settings.lua                  persistent per-source enable/disable
+  settings.lua                  persistent per-source enable/disable, covers toggle
   downloader.lua                resolve entry → stream file to disk
-  http_util.lua                 GET / getJSON / download over LuaSocket
+  http_util.lua                 GET / getJSON / download over LuaSocket (real timeouts)
+  covers.lua                    fetch + decode cover thumbnails, aspect-fit, cache
+  coverbrowser.lua              paged results view with cover thumbnails
   providers_gutendex.lua        Project Gutenberg
   providers_internetarchive.lua Internet Archive
   providers_doab.lua            DOAB
@@ -65,14 +75,26 @@ in later with zero UI changes. See `entry.lua`.
 ### Dedupe + prefer-best-edition
 When the same work appears in several sources, `dedupe.lua` collapses them —
 keeping the position of first appearance but upgrading to the highest-`quality`
-edition (e.g. Standard Ebooks > raw Gutenberg, once SE is back).
+edition (e.g. Standard Ebooks > raw Gutenberg, once SE is back). Keys are
+UTF-8-aware, so accented titles still match across sources.
 
 ### Adding a provider
 Create `providers_<name>.lua` exposing `search(query, limit) -> entries, err`,
-where each entry comes from `Entry.download{title, author, source, format?, resolve}`.
+where each entry comes from `Entry.download{title, author, source, format?, cover?, resolve}`.
 `resolve()` returns the file URL (can be lazy — IA defers its metadata lookup
 until the user taps). Register it in `catalog.lua` and give it a `quality` in
-`entry.lua`.
+`entry.lua`. Keep it free of KOReader-only modules so the tests can load it.
+
+## Cover thumbnails
+
+Results show cover thumbnails in a custom paged view (`coverbrowser.lua`) —
+the base KOReader Menu is text-only, so covers needed a dedicated widget. Covers
+are fetched with short timeouts, decoded at native size, scaled once to fit the
+thumbnail box (aspect preserved) and cached per session (`covers.lua`).
+Providers supply `cover_url`: Gutenberg (`image/jpeg`), Internet Archive
+(`/services/img/<id>`), DOAB (THUMBNAIL bitstream). A **Show cover thumbnails**
+toggle in the menu falls back to the plain text list. Both views end with the
+same footer note (duplicates merged / sources errored — tap for details).
 
 ## Install
 
@@ -83,35 +105,36 @@ until the user taps). Register it in `catalog.lua` and give it a `quality` in
 
 ## Testing
 
+```
+brew install luajit luarocks luacheck
+# rocks built for LuaJIT (the device's Lua 5.1 ABI); they land in ~/.luarocks
+LJ="$(brew --prefix luajit)"
+luarocks --lua-version=5.1 --lua-dir="$LJ" install luasocket
+luarocks --lua-version=5.1 --lua-dir="$LJ" install dkjson
+luarocks --lua-version=5.1 --lua-dir="$LJ" install luasec OPENSSL_DIR="$(brew --prefix openssl@3)"
+
+luacheck .                                   # lint (std = luajit, the device runtime)
+luajit test/unit.lua                         # offline: dedup key, dedupe, IA query sanitizer, OPDS parser
+eval "$(luarocks --lua-version=5.1 path)"
+luajit test/headless_providers.lua "pride and prejudice"   # live APIs
+```
+
 `test/headless_providers.lua` runs the real catalog/dedupe/provider/http code
-against the live APIs, stubbing only the KOReader-specific modules:
-
-```
-brew install lua luarocks
-luarocks install luasocket luasec dkjson
-eval "$(luarocks path)"
-lua test/headless_providers.lua "pride and prejudice"
-```
-
-Exits non-zero on failure. DOAB's 403 from datacenter IPs is treated as expected.
-
-## Cover thumbnails
-
-Results show cover thumbnails in a custom paged view (`coverbrowser.lua`) —
-the base KOReader Menu is text-only, so covers needed a dedicated widget. Covers
-are downloaded + decoded (`covers.lua` via `RenderImage`) and cached per session.
-Providers supply `cover_url`: Gutenberg (`image/jpeg`), Internet Archive
-(`/services/img/<id>`), DOAB (THUMBNAIL bitstream). A **Show cover thumbnails**
-toggle in the menu falls back to the plain text list.
+against the live APIs, stubbing only the KOReader-specific modules. It exits
+non-zero on failure; DOAB's 403 from datacenter IPs is treated as expected.
+Everything runs under LuaJIT, the same runtime as the device.
+GitHub Actions runs the lint, a LuaJIT load-check of every file, and the offline
+unit test on every push.
 
 ## Roadmap
 
 - [ ] Standard Ebooks via **authenticated OPDS** (opt-in, patron token)
 - [ ] **Discovery bridge**: surface borrow (library) / buy availability as
       `borrow`/`buy` entries that deep-link to the Kobo/Libby app (no DRM in-app)
-- [ ] Async cover loading (currently fetched synchronously per page)
+- [ ] Async cover loading and parallel provider queries (everything is
+      sequential today; covers use short timeouts to bound the wait)
 - [ ] Format choice when an item has several (EPUB / PDF)
-- [ ] "Already in library" badges
+- [ ] "Already in library" badges in the results list
 
 ## License
 

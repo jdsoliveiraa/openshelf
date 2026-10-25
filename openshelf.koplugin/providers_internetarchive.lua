@@ -15,10 +15,26 @@ local function first(value)
     return value
 end
 
+-- Lucene/Solr treat these as syntax: a stray ":" or "(" in user text makes the
+-- whole query invalid and IA answers with an error (seen as zero results).
+local LUCENE_SPECIALS = "[%+%-&|!%(%){}%[%]%^\"~%*%?:\\/]"
+
+--- Make free text safe to embed in the advancedsearch query.
+-- Lowercasing also defuses the AND / OR / NOT operators. Returns nil when
+-- nothing searchable is left.
+function InternetArchive.sanitizeQuery(query)
+    local q = (query or ""):lower():gsub(LUCENE_SPECIALS, " ")
+    q = q:gsub("%s+", " "):gsub("^%s+", ""):gsub("%s+$", "")
+    if q == "" then return nil end
+    return q
+end
+
 function InternetArchive.search(query, limit)
     limit = limit or 20
+    local clean = InternetArchive.sanitizeQuery(query)
+    if not clean then return {} end
     local q = url_escape(string.format(
-        "(%s) AND mediatype:texts AND format:(EPUB)", query))
+        "(%s) AND mediatype:texts AND format:(EPUB)", clean))
     local url = string.format(
         "https://archive.org/advancedsearch.php?q=%s"
         .. "&fl[]=identifier&fl[]=title&fl[]=creator"

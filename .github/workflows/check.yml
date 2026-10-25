@@ -1,0 +1,29 @@
+name: check
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  lint-and-unit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install LuaJIT and luacheck
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y luajit luarocks
+          sudo luarocks install luacheck
+
+      - name: Lint
+        run: luacheck .
+
+      - name: Load-check every file with LuaJIT (device semantics)
+        run: |
+          for f in openshelf.koplugin/*.lua test/*.lua; do
+            luajit -e "assert(loadfile('$f'))" || exit 1
+          done
+
+      - name: Offline unit test
+        run: luajit test/unit.lua

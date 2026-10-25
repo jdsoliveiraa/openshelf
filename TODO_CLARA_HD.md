@@ -44,13 +44,19 @@
 
 ## 2. Pending / unverified ⏳ (do next)
 
+- [ ] **Deploy OpenShelf v0.4** — built 2026-10-25, NOT yet on the device (it
+      still runs v0.3). Deploy per §5, then check on-device: cover-view footer
+      when DOAB errors (tap → details), covers not squashed, "already
+      downloaded → Open / Download again" prompt, book lands in
+      `/mnt/onboard/OpenShelf/` and shows in the stock library after leaving KOReader.
 - [ ] **Verify OpenShelf cover view on-device** — `coverbrowser.lua` is a custom
       widget never rendered outside KOReader. Watch: layout, tap→correct row,
       page-build freeze while covers download, placeholder for missing covers.
       Fallback: turn OFF "Show cover thumbnails" → plain text list.
 - [ ] **Verify DOAB live** — blocked (403) from datacenter IPs during testing;
       should work from the Kobo's residential IP. If it errors, the results
-      footer shows "⚠ 1 source errored" and everything else still works.
+      footer (cover view and text list alike, since v0.4) shows
+      "⚠ 1 source errored" and everything else still works.
 - [ ] **Verify SSH end-to-end** — start server on device, then from Mac:
       `ssh -p 2222 -i ~/.ssh/id_rsa root@<kobo-ip>` (password login disabled).
 - [ ] **Make a DURABLE backup** — the 305 MB device backup from setup lives in a
@@ -129,11 +135,18 @@ the main reader — main unique win is privacy/telemetry.)
 toggles, dedupe + prefer-best-edition, grouped-by-action results, cover thumbnails
 (custom widget) with text fallback, download → read. Headless test harness.
 
+**Built (v0.4, 2026-10-25 — not yet deployed):** source-error / merged-duplicates
+footer in the cover view too, aspect-correct covers, real HTTP total timeouts
+(socketutil sinks), downloads to the visible `/mnt/onboard/OpenShelf/` folder,
+"already downloaded → Open / Download again" prompt, UTF-8-aware dedupe keys,
+Internet Archive query sanitizing, offline unit test + luacheck + GitHub CI.
+
 **Next:**
 - [ ] **Standard Ebooks via authenticated OPDS** (opt-in; user pastes a patron
       token in Sources). `opds.lua` parser is ready. **Do NOT scrape SE** (see §6).
 - [ ] **Async cover loading** — covers currently fetched synchronously per page
-      (brief freeze). Load placeholders first, swap in covers.
+      (brief freeze; bounded since v0.4 by 5 s block / 10 s total per cover).
+      Load placeholders first, swap in covers. Same for the serial provider queries.
 - [ ] **Discovery bridge** (borrow/buy) — the entry model already carries
       `action = borrow|buy` and the UI groups by action (📚/🛒 reserved). Surface
       library/purchase availability as `borrow`/`buy` entries that deep-link to the
@@ -147,14 +160,25 @@ toggles, dedupe + prefer-best-edition, grouped-by-action results, cover thumbnai
 
 **Dev workflow:**
 ```bash
-# headless test (runs real code vs live APIs; KOReader modules shimmed)
-brew install lua luarocks
-luarocks install luasocket luasec dkjson
-cd openshelf && eval "$(luarocks path)"
-lua test/headless_providers.lua "pride and prejudice"   # exits non-zero on failure
+# one-time toolchain — everything runs under LuaJIT (= device semantics).
+# Homebrew's `lua` is 5.5 (and luarocks can't write to /opt/homebrew/lib anyway),
+# so build the rocks for LuaJIT's 5.1 ABI; they go to ~/.luarocks:
+brew install luajit luarocks luacheck
+LJ="$(brew --prefix luajit)"
+luarocks --lua-version=5.1 --lua-dir="$LJ" install luasocket
+luarocks --lua-version=5.1 --lua-dir="$LJ" install dkjson
+luarocks --lua-version=5.1 --lua-dir="$LJ" install luasec OPENSSL_DIR="$(brew --prefix openssl@3)"
 
-# syntax-check every file
-cd openshelf.koplugin && for f in *.lua; do lua -e "assert(loadfile('$f'))"; done
+# lint + offline unit test (no network) — same as CI
+luacheck .
+luajit test/unit.lua
+
+# headless test (runs real code vs live APIs; KOReader modules shimmed)
+cd openshelf && eval "$(luarocks --lua-version=5.1 path)"
+luajit test/headless_providers.lua "pride and prejudice"   # exits non-zero on failure
+
+# load-check every file with LuaJIT
+for f in openshelf.koplugin/*.lua test/*.lua; do luajit -e "assert(loadfile('$f'))"; done
 
 # deploy to device (USB) — copy + sync IMMEDIATELY (see §6 USB drops)
 rm -rf /Volumes/KOBOeReader/.adds/koreader/plugins/openshelf.koplugin
@@ -179,9 +203,11 @@ diskutil eject /Volumes/KOBOeReader
 - **DOAB / OAPEN** block **datacenter IPs** (403 "address not allowed") but work
   from residential IPs (the Kobo). Can't be tested from a cloud/datacenter host.
 - **Lua version mismatch**: device KOReader runs **LuaJIT (Lua 5.1 semantics)**;
-  local tests run **Lua 5.5**. Caught a real bug: `require()` returns a *second*
-  value (loader path) on 5.3+; in the last slot of a table constructor it leaks in.
-  Fix: bind requires to locals first (see `catalog.lua`).
+  local tests *used to* run **Lua 5.5**. Caught a real bug: `require()` returns a
+  *second* value (loader path) on 5.3+; in the last slot of a table constructor it
+  leaks in. Fix: bind requires to locals first (see `catalog.lua`). Since
+  2026-10-25 every local check runs under **LuaJIT** too (rocks installed with
+  `luarocks --lua-version=5.1`) — keep it that way.
 - **NickelMenu**: `:` is the field separator — **labels must not contain colons**
   (a `Wi-Fi: Toggle` label broke parsing → "unknown action"). Format:
   `menu_item : location : label : action : arg` (exactly 4 colons).
@@ -191,7 +217,21 @@ diskutil eject /Volumes/KOBOeReader
   rewrites it on exit, preserving the seeded keys.
 - **KOReader base `Menu` is text-only** — no per-item images. Cover thumbnails
   required a custom widget (`coverbrowser.lua`), rendering downloaded bytes via
-  `RenderImage:renderImageData(data, #data, false, w, h)` → `ImageWidget{image=bb}`.
+  `RenderImage:renderImageData(data, #data, false)` → fit → `ImageWidget{image=bb}`.
+- **`renderImageData(..., w, h)` STRETCHES to exactly w×h** (so does
+  `Mupdf.renderImage`) — no aspect fit. Decode at native size and scale once with
+  `RenderImage:scaleBlitBuffer` (frees the original by default). See `covers.lua`.
+- **Plain `ltn12` sinks ignore socketutil's total timeout** — LuaSocket resets its
+  timer on every chunk. Use `socketutil.table_sink` / `file_sink` (wall-clock
+  limit) and create them *after* `socketutil:set_timeout(...)`.
+- **`%w` / `%a` are ASCII-only in LuaJIT** (C locale): `gsub("[^%w%s]", " ")`
+  shreds UTF-8 ("Misérables" → "mis rables"). Keep bytes ≥128: `[%w%s\128-\255]`.
+- **Replaced widget subtrees are never freed** — `UIManager:close` only sends
+  `CloseWidget` to the tree that is current at close time. Call `old:free()`
+  before swapping `self[1]` (see `CoverBrowser:_render`).
+- **Lucene specials in user text break Internet Archive search** — a `:` or `(`
+  makes advancedsearch return an error (seen as zero results). Strip them and
+  lowercase (`AND`/`OR`/`NOT` are operators) — `InternetArchive.sanitizeQuery`.
 - **Firmware updates disable KFMon** → the KOReader launcher icon vanishes; rerun
   the one-click installer to restore (books/settings survive).
 
@@ -208,6 +248,8 @@ diskutil eject /Volumes/KOBOeReader
 - **Dedupe + prefer-best-edition**; **keep the results list** (don't auto-pick);
   **group by action**.
 - **Covers ON by default**, with a toggle fallback to text.
+- **Downloads go to a visible top-level folder** (`/mnt/onboard/OpenShelf`), not
+  KOReader's hidden data dir, so books show in both readers (decided 2026-10-25).
 - Access to device: **SSH, on-demand, key-only** (not always-on).
 - Scope: software + firmware now; hardware later.
 
