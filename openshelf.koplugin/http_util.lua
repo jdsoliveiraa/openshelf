@@ -12,7 +12,7 @@ local http = require("socket.http")
 local https = require("ssl.https")
 local JSON = require("json")
 local logger = require("logger")
-local VERSION = require("version")
+local VERSION = require("openshelf_version")
 
 local UA = "OpenShelf/" .. VERSION .. " (KOReader; +https://github.com/jdsoliveiraa/openshelf)"
 

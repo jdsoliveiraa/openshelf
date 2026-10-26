@@ -34,6 +34,11 @@ CI runs the lint, a LuaJIT load-check of every file, and the unit test.
   subtype; `goto` is fine. `%w`/`%a` match ASCII only — keep bytes ≥128 when
   normalising text. `require()` returns two values on 5.3+ locally, so bind
   requires to locals before putting them in tables.
+- **Module names share one flat namespace with KOReader and every other plugin.**
+  `require("x")` returns whatever KOReader already cached under `x`, so never
+  name a sibling like a KOReader module (`version`, `util`, `logger`, `device`,
+  `settings` is ours only because KOReader has none…). New files: pick a
+  distinctive name or prefix `openshelf_`; `test/unit.lua` keeps the reserved list.
 - **KOReader UI modules cannot run locally.** `coverbrowser.lua`, `covers.lua`,
   `main.lua`, `downloader.lua`, `settings.lua` are only verified on-device. Keep
   the text-list fallback working; keep provider/catalog/entry/opds code free of
@@ -47,7 +52,7 @@ CI runs the lint, a LuaJIT load-check of every file, and the unit test.
 
 ## Deploy
 
-Bump `openshelf.koplugin/version.lua`, then `scripts/deploy.sh` over SSH: the Kobo
+Bump `openshelf.koplugin/openshelf_version.lua`, then `scripts/deploy.sh` over SSH: the Kobo
 must have its SSH server started (Settings → Network → SSH server; on-demand,
 key-only, `Host kobo` in `~/.ssh/config`). The script stages, swaps, syncs and
 md5-verifies the plugin folder; KOReader must then be restarted on the device

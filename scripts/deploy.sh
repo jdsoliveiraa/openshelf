@@ -32,7 +32,7 @@ fi
 
 find "$NAME" \( -name '.DS_Store' -o -name '._*' \) -delete
 
-version="$(sed -n 's/^return "\(.*\)"/\1/p' "$NAME/version.lua")"
+version="$(sed -n 's/^return "\(.*\)"/\1/p' "$NAME/openshelf_version.lua")"
 echo "Deploying $NAME v$version to $HOST ..."
 
 "${SSH[@]}" "rm -rf $PLUGINS/$NAME.new"

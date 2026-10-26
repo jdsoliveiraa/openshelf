@@ -46,11 +46,14 @@ already downloaded offers to open it instead of fetching it again.
 
 Flat module layout — KOReader puts a plugin's own folder on the Lua path, so
 siblings `require` each other by filename.
+Module names must not clash with anything KOReader loads itself (all plugins
+share one flat namespace) — hence `openshelf_version`, not `version`; the unit
+test checks every file against a reserved-name list.
 
 ```
 openshelf.koplugin/
   _meta.lua                     plugin manifest
-  version.lua                   plugin version (User-Agent, About)
+  openshelf_version.lua         plugin version (User-Agent, About)
   main.lua                      UI: menu, search, grouped results, download/read
   catalog.lua                   fans query across providers → merge → dedupe → group
   entry.lua                     result model: actions (download/borrow/buy), quality, dedup keys
