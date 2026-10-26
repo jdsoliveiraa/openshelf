@@ -52,7 +52,11 @@ The full design record with every decision is in [DESIGN.md](DESIGN.md).
 - **My books** — everything you downloaded, shelved by KOReader's own reading
   status: Reading now (with progress), Not started, Finished. Files deleted
   outside OpenShelf stay listed, dimmed, with *Download again*; hold to remove.
-- **Settings** — sources, default view, results per source, clear recents, About.
+- **Settings** — sources, default view, results per source, clear recents,
+  home mode, About.
+- **Home mode** — OpenShelf opens when KOReader starts and again after every
+  book, so it behaves like the app; X on the home screen shows KOReader's file
+  manager underneath. Off by default (gear → Home mode).
 
 Downloaded books are also added to a KOReader **Collection** named "OpenShelf".
 
@@ -118,6 +122,11 @@ and give it a `quality` in `entry.lua`.
    (`.adds/koreader/plugins/` on Kobo), or use `scripts/deploy.sh` over SSH.
 3. Restart KOReader → **OpenShelf** appears in the main menu. You can also bind
    the *OpenShelf* action to a gesture (it is registered with the Dispatcher).
+4. Kobo, optional: `scripts/deploy-launcher.sh` installs a KFMon watch, its
+   script and an icon (`kobo/`). After one reboot, **OpenShelf** shows in
+   NickelMenu and in the Kobo library, and starts KOReader with OpenShelf as
+   the home screen for that session (`OPENSHELF_AUTOOPEN=1`). Turn on *Home
+   mode* in the settings to get the same when KOReader is launched normally.
 
 ## Development
 

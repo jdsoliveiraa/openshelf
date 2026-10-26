@@ -256,3 +256,36 @@ Deviations and findings, all deliberate:
 - The `hold` gesture could not be exercised on the emulator (no touch); the
   walkthrough calls the handlers directly. Verify tap-vs-hold on the Clara.
 
+## 8. Home mode (added 2026-10-26, after the v0.5 deploy)
+
+Question raised: should OpenShelf become a standalone app, since closing a
+book lands in KOReader's file manager rather than back in OpenShelf?
+
+**Decision: stay a plugin.** A standalone Kobo app would need its own
+framebuffer/touch/Wi-Fi stack and an EPUB renderer, and it would still hand
+off to KOReader to read, which returns to its own file manager, not to the
+app. KOReader has no "plugin as shell" option, but its lifecycle is enough:
+the file manager and every plugin in it are torn down while a book is open
+and rebuilt when it closes, so a plugin that opens its home view from
+`init()` in the file-manager context is on screen at start and after every
+book.
+
+- **Setting** "Home mode → Open at start and after each book", off by
+  default, in the gear menu. `OPENSHELF_AUTOOPEN=1` turns it on for one
+  session (the Kobo launcher and `scripts/emu.sh` set it).
+- **X on the home screen reveals the file manager** (the escape hatch); the
+  setting is reversible from the gear, and opening a book from the file
+  manager still returns to OpenShelf while the mode is on.
+- KOReader's own "Start with: last file" wins at boot; OpenShelf then appears
+  when that book is closed.
+- **Kobo launcher** (`kobo/`): a KFMon watch (`kfmon/openshelf.ini`) whose
+  action (`openshelf.sh`) exports the env var and execs KOReader's own start
+  script, plus `openshelf.png` (drawn by `tools/make-icon.py`). NickelMenu's
+  kfmon generator lists it by label, so no NickelMenu config changes.
+  Installed by `scripts/deploy-launcher.sh`; KFMon and Nickel pick it up
+  after one reboot.
+- Verified on the emulator with `tools/emu-walkthrough-3.lua`: home at start
+  from the setting alone → open a book → KOReader "Home" → OpenShelf is back
+  → X → file manager. The same run with the setting off and the env var set
+  passes too.
+

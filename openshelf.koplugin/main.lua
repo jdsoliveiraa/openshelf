@@ -20,6 +20,9 @@ local _ = require("gettext")
 
 local App = require("app")
 local Downloader = require("downloader")
+local Settings = require("settings")
+
+local dev_script_started = false
 
 local OpenShelf = WidgetContainer:extend{
     name = "openshelf",
@@ -39,14 +42,23 @@ function OpenShelf:init()
     self:onDispatcherRegisterActions()
     self.ui.menu:registerToMainMenu(self)
     Downloader.on_complete = App.recordDownload
-    -- Dev conveniences for the emulator (no effect unless the env vars are set):
-    -- open straight into OpenShelf, and run a Lua script that drives the UI
-    -- (used to walk every screen and take screenshots without a mouse).
-    if os.getenv("OPENSHELF_AUTOOPEN") then
-        UIManager:scheduleIn(1, function() self:onOpenShelfOpen() end)
+    -- Home mode: OpenShelf is the screen KOReader lands on at start and again
+    -- every time a book is closed, so it feels like the app and the file
+    -- manager becomes the escape hatch (X on the home screen reveals it).
+    -- KOReader tears the file manager and its plugins down while a book is
+    -- open and rebuilds them afterwards, so opening home from init() in the
+    -- file-manager context covers both moments. OPENSHELF_AUTOOPEN=1 does the
+    -- same for one session: the Kobo launcher (kobo/openshelf.sh) and
+    -- scripts/emu.sh set it.
+    if not self.ui.document and (Settings.homeMode() or os.getenv("OPENSHELF_AUTOOPEN")) then
+        UIManager:nextTick(function() self:onOpenShelfOpen() end)
     end
+    -- Dev convenience for the emulator: run a Lua script that drives the UI
+    -- (used to walk every screen and take screenshots without a mouse). Once
+    -- per process: init() runs again for every file manager / reader instance.
     local dev_script = os.getenv("OPENSHELF_DEV_SCRIPT")
-    if dev_script then
+    if dev_script and not dev_script_started then
+        dev_script_started = true
         UIManager:scheduleIn(2, function()
             local ok, err = pcall(dofile, dev_script)
             if not ok then require("logger").err("OpenShelf dev script failed:", err) end

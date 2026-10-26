@@ -4,6 +4,7 @@ Persistent plugin settings (LuaSettings-backed, <settings>/openshelf.lua):
   - default results view ("list" | "grid")
   - results per source (page size per provider)
   - recent searches (newest first, max 8)
+  - home mode: open OpenShelf when KOReader starts and after a book closes
 --]]
 local DataStorage = require("datastorage")
 local LuaSettings = require("luasettings")
@@ -80,6 +81,17 @@ end
 
 function Settings.setPerSource(n)
     save("per_source", tonumber(n) or 15)
+end
+
+---------------------------------------------------------------------------
+-- Home mode (see main.lua): OpenShelf as the screen KOReader lands on
+---------------------------------------------------------------------------
+function Settings.homeMode()
+    return s():readSetting("home_mode") == true
+end
+
+function Settings.setHomeMode(on)
+    save("home_mode", on and true or false)
 end
 
 ---------------------------------------------------------------------------

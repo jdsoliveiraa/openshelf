@@ -16,6 +16,7 @@ eval "$(luarocks --lua-version=5.1 path)"; luajit test/headless_providers.lua "p
 for f in openshelf.koplugin/*.lua test/*.lua; do luajit -e "assert(loadfile('$f'))"; done
 scripts/emu.sh                               # emulator, opens straight into OpenShelf
 scripts/emu.sh --walk tools/emu-walkthrough.lua --shots /tmp/shots   # scripted walkthrough + PNGs
+scripts/emu.sh --no-autoopen --walk tools/emu-walkthrough-3.lua --shots /tmp/shots   # home mode (needs OPENSHELF_TEST_EPUB)
 ```
 
 Everything runs under LuaJIT (the device runtime). One-time setup:
@@ -42,10 +43,16 @@ missing from KOReader's own list), `git clone https://github.com/koreader/koread
 `.kohome/plugins/` and runs at half Clara scale (536×724 @150 dpi — identical
 proportions, fits a laptop). `--clara` gives the exact 1072×1448.
 
-- `OPENSHELF_AUTOOPEN=1` opens OpenShelf on start; `OPENSHELF_DEV_SCRIPT=file.lua`
-  runs a script inside KOReader (see `tools/emu-walkthrough*.lua`) and
-  `Screen:shot(path)` saves PNGs — macOS `screencapture` is refused for the
-  terminal, so this is how screens are reviewed.
+- `OPENSHELF_AUTOOPEN=1` = home mode for the session (open at start and after
+  every book; `scripts/emu.sh` sets it unless `--no-autoopen`).
+  `OPENSHELF_DEV_SCRIPT=file.lua` runs a script inside KOReader once per
+  process (see `tools/emu-walkthrough*.lua`) and `Screen:shot(path)` saves
+  PNGs — macOS `screencapture` is refused for the terminal, so this is how
+  screens are reviewed.
+- Plugin `init()` runs for every file-manager and reader instance, and the
+  file manager is rebuilt after each book. The emulator only reaches the file
+  manager once `quickstart_shown_version` in `.kohome/settings.reader.lua` is
+  huge (a from-source build normalizes its version to 0).
 - **Forked jobs die on the macOS emulator** as soon as the child touches the
   network (the same fork + HTTPS works in a plain luajit; it's the Cocoa/SDL
   process state). `jobs.lua` therefore runs inline there; devices use real
@@ -93,3 +100,6 @@ on-demand, key-only, `Host kobo` in `~/.ssh/config`). The script stages, swaps,
 syncs and md5-verifies the plugin folder; KOReader must then be restarted on the
 device (Exit → Restart KOReader). USB fallback per `TODO_CLARA_HD.md` §5 — always
 `cp … && sync && sync` in one command (§6: the USB volume drops mid-operation).
+`scripts/deploy-launcher.sh` installs the Kobo launcher (`kobo/`: KFMon watch +
+script + icon, listed by NickelMenu's kfmon generator); KFMon only reads it
+after a reboot.

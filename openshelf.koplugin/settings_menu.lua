@@ -1,6 +1,6 @@
 --[[
-Settings behind the gear (DESIGN.md §2.6): sources, default results view,
-results per source, clear recent searches, About. A stock KOReader Menu;
+Settings behind the gear (DESIGN.md §2.6, §8): sources, default results view,
+results per source, clear recent searches, home mode, About. A stock KOReader Menu;
 the right column shows the current value.
 --]]
 local ConfirmBox = require("ui/widget/confirmbox")
@@ -81,6 +81,15 @@ function SettingsMenu.show(opts)
                         refresh()
                     end,
                 })
+            end,
+        }
+        t[#t + 1] = { text = _("Home mode"), dim = true, select_enabled = false }
+        t[#t + 1] = {
+            text = "      " .. _("Open at start and after each book"),
+            mandatory = Settings.homeMode() and Glyphs.check or "",
+            callback = function()
+                Settings.setHomeMode(not Settings.homeMode())
+                refresh()
             end,
         }
         t[#t + 1] = {

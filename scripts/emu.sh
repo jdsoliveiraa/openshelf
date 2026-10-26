@@ -9,17 +9,19 @@
 #   scripts/emu.sh --walk tools/emu-walkthrough.lua --shots /tmp/shots
 #                                      # drive the UI with a script, save screenshots
 #   scripts/emu.sh --clara             # exact Kobo Clara HD geometry (1072x1448 @300dpi, needs a tall screen)
+#   scripts/emu.sh --no-autoopen       # start in KOReader's file manager (tests the home-mode *setting*)
 # Env: OPENSHELF_INLINE_JOBS=1|0 forces inline/forked background jobs (macOS defaults to inline).
 set -euo pipefail
 HERE="$(cd "$(dirname "$0")/.." && pwd)"
 KOREADER="${KOREADER_SRC:-$HERE/../koreader}"
 KOHOME="$HERE/.kohome"
-WALK=""; SHOTS=""; GEOM=(-W 536 -H 724 -D 150)   # half-scale Clara: same proportions, fits a laptop screen
+WALK=""; SHOTS=""; AUTOOPEN=1; GEOM=(-W 536 -H 724 -D 150)   # half-scale Clara: same proportions, fits a laptop screen
 while [ $# -gt 0 ]; do
   case "$1" in
     --walk) WALK="$(cd "$(dirname "$2")" && pwd)/$(basename "$2")"; shift 2 ;;
     --shots) SHOTS="$2"; mkdir -p "$SHOTS"; SHOTS="$(cd "$SHOTS" && pwd)"; shift 2 ;;
     --clara) GEOM=(-s kobo-clara); shift ;;
+    --no-autoopen) AUTOOPEN=""; shift ;;
     *) echo "unknown option $1" >&2; exit 2 ;;
   esac
 done
@@ -28,7 +30,8 @@ mkdir -p "$KOHOME/plugins"
 ln -sfn "$HERE/openshelf.koplugin" "$KOHOME/plugins/openshelf.koplugin"
 P="$(brew --prefix 2>/dev/null || echo /opt/homebrew)"
 export PATH="$P/bin:$P/opt/findutils/libexec/gnubin:$P/opt/gnu-getopt/bin:$P/opt/make/libexec/gnubin:$P/opt/coreutils/libexec/gnubin:$PATH"
-export KO_HOME="$KOHOME" OPENSHELF_AUTOOPEN=1 KOREADER_WINDOW_POS_X=0 KOREADER_WINDOW_POS_Y=60
+export KO_HOME="$KOHOME" KOREADER_WINDOW_POS_X=0 KOREADER_WINDOW_POS_Y=60
+[ -n "$AUTOOPEN" ] && export OPENSHELF_AUTOOPEN=1
 [ -n "$WALK" ] && export OPENSHELF_DEV_SCRIPT="$WALK"
 [ -n "$SHOTS" ] && export OPENSHELF_SHOT_DIR="$SHOTS"
 cd "$KOREADER"

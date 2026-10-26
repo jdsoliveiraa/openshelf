@@ -65,8 +65,15 @@
       downloaded → Open / Download again" prompt, book lands in
       `/mnt/onboard/OpenShelf/` and shows in the stock library after leaving KOReader.
       If the plugin is missing from the menu: `ssh kobo cat /mnt/onboard/.adds/koreader/crash.log`.
+- [ ] **Verify v0.5.1 home mode + launcher on-device** (deployed 2026-10-26 over
+      SSH, `DESIGN.md` §8). After a reboot: "OpenShelf" in NickelMenu (kfmon
+      generator) and `openshelf.png` in the library; tapping starts KOReader
+      straight into OpenShelf; closing a book returns to OpenShelf; X shows the
+      file manager. Gear → Home mode makes it permanent for a normal KOReader
+      launch. If the NickelMenu entry is missing:
+      `ssh kobo /mnt/onboard/.adds/kfmon/bin/kfmon-printlog.sh | tail`.
 - [ ] **Verify OpenShelf v0.5 on-device** (built and verified on the macOS emulator
-      2026-10-26, see `DESIGN.md` §7; not yet deployed). Watch especially:
+      2026-10-26, see `DESIGN.md` §7; deployed over SSH the same day). Watch especially:
       (a) the **subprocess path** — search/covers/downloads fork a child per job
       (`jobs.lua`); on the Mac emulator children die, so only the device can prove
       it; if it fails, `OPENSHELF_INLINE_JOBS=1` is the escape hatch;
@@ -222,6 +229,7 @@ scripts/emu.sh --walk tools/emu-walkthrough.lua --shots /tmp/shots   # scripted 
 # SSH server → start; then (stages, swaps, syncs, md5-verifies all files):
 scripts/deploy.sh            # host alias `kobo` from ~/.ssh/config
 # then on the Kobo: top menu → Exit → Restart KOReader (plugins load at startup)
+scripts/deploy-launcher.sh   # KFMon watch + script + icon from kobo/ → then REBOOT the Kobo
 
 # fallback: USB — copy + sync IMMEDIATELY (see §6 USB drops / `._*` files)
 rm -rf /Volumes/KOBOeReader/.adds/koreader/plugins/openshelf.koplugin
@@ -311,6 +319,18 @@ diskutil eject /Volumes/KOBOeReader
   padding yourself; `getSize()` is content + border + padding.
 - **Firmware updates disable KFMon** → the KOReader launcher icon vanishes; rerun
   the one-click installer to restore (books/settings survive).
+- **KFMon reads its config only at boot / after a USB session** — a new
+  `.adds/kfmon/config/*.ini` (the OpenShelf launcher) needs a reboot. NickelMenu's
+  `generator : main : kfmon` then lists the watch by its `label`, no NM config
+  edit needed. Nickel indexes a new PNG on the same occasions.
+- **KOReader rebuilds the file manager, and re-runs every plugin's `init()`, after
+  each book** — `init()` runs several times per process. Anything that must happen
+  once (the `OPENSHELF_DEV_SCRIPT` hook) needs a module-level guard; the home-mode
+  auto-open relies on exactly this rebuild.
+- **The emulator boots into the quickstart guide** until `quickstart_shown_version`
+  in `.kohome/settings.reader.lua` is ≥ KOReader's force-show version (a from-source
+  build normalizes to 0, so set it huge). Until then the file manager never shows
+  and file-manager-context plugin code doesn't run.
 
 ---
 
