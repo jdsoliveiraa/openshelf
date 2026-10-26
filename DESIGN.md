@@ -1,7 +1,8 @@
 # OpenShelf UI redesign — design record (v0.5)
 
 > Outcome of a grilling session on 2026-10-26. Thirty-six decisions, every branch
-> visited, nothing silently assumed. **Don't relitigate without a reason**; if
+> visited, nothing silently assumed. §9 adds decisions 37–57 (modular
+> providers, a second session the same day; contract in `PROVIDERS.md`). **Don't relitigate without a reason**; if
 > something here turns out to be wrong on-device, change it and note why.
 > Device facts (Kobo Clara HD, 1072×1448 @ 300 dpi, e-ink) live in
 > `TODO_CLARA_HD.md`. Project constraints live in `CLAUDE.md`.
@@ -228,11 +229,33 @@ their covers. Refresh runs in a subprocess when stale and online.
 | 34 | List default; ✓ = exact edition; no landscape design; title-bar icon layout |
 | 35 | Leaving results kills subprocesses; sidecar reading status; Collection name; hide missing metadata |
 | 36 | Emulator built from source, `kodev run -s kobo-clara` |
+| 37 | Providers are modular: in-tree, `provider-openshelf-*.koplugin` via KOReader's Provider registry, drop-in files under `<settings>/openshelf/providers` |
+| 38 | Stable `id` per provider, separate from display `name`; one-time migration of library records and source settings (library v1 → v2, `.v1.bak` kept) |
+| 39 | Providers build entries through `ctx.Entry`; the host overwrites `provider`/`source` and defaults `quality` |
+| 40 | Provider functions receive `ctx` (http, json, url_escape, settings, Entry, OPDS, log); no `require` of OpenShelf modules |
+| 41 | api 1 covers search, resolve, browse shelves, settings schema, authenticated downloads (`resolve` → `{url, headers}`), borrow/buy actions, `check` |
+| 42 | Built-ins stay in-tree under `providers/`, registered through the same path as externals |
+| 43 | External providers honor their own `enabled_by_default`; installing is the opt-in |
+| 44 | User arranges source order with the stock SortWidget; one order drives result slots, home shelves and the filter dialog; new sources append |
+| 45 | 60 s deadline on search/browse/resolve/check jobs in subprocess mode; slot reads "timed out"; downloads exempt |
+| 46 | DRM-free is policy in `PROVIDERS.md`, not enforced in code |
+| 47 | Feature-whitelist workaround in the template plugin + upstream PR adding `openshelf` to KOReader's Provider features |
+| 48 | Invalid providers (shape, api, load error, duplicate id) show dimmed in Sources with the reason; the later registrant loses |
+| 49 | Borrow rows resolve and download like downloads (button "Borrow"); buy rows show URL + QR via QRMessage, never download; optional `price` |
+| 50 | Borrow/buy rows dedupe under any free download of the same work |
+| 51 | Settings fields: text, secret, toggle, choice; `required` left empty → "Needs setup", source skipped |
+| 52 | Optional `check(ctx)` → "Test connection" in the source submenu |
+| 53 | Home shows shelves from every enabled provider in source order; per-source "Shelves on home" toggle |
+| 54 | Registry read and drop-in folder scanned lazily on each open; files loaded once per process |
+| 55 | Dev kit: `PROVIDERS.md`, `tools/provider_check.lua`, template plugin (also loaded by the emulator walkthrough), example drop-in |
+| 56 | One release, v0.6.0; spec written and reviewed before code |
+| 57 | `api = 1` integer, exact match; `Entry.new{action}` constructor with `Entry.download` as alias; covers unauthenticated |
 
-## 6. Out of scope (parked, unchanged from the roadmap)
-Standard Ebooks via authenticated OPDS · borrow/buy discovery bridge · more
-sources · other content types. The `action` field and group-by-action code stay
-so these can slot in later.
+## 6. Out of scope
+Other content types. Standard Ebooks (authenticated OPDS, never scraped), the
+borrow/buy bridge and further sources were parked here in v0.5; §9 turns them
+into providers built on one contract, so they are no longer out of scope, just
+not built yet.
 
 ## 7. Build notes (2026-10-26)
 
@@ -293,3 +316,92 @@ book.
   → X → file manager. The same run with the setting off and the env var set
   passes too.
 
+
+## 9. Modular providers (v0.6 design, 2026-10-26)
+
+Question: how do we let any developer add a catalog to OpenShelf? Grilled the
+same way as the redesign; the normative contract for authors is `PROVIDERS.md`
+(api 1). This section records the host-side design and why.
+
+### 9.1 Shape
+A provider is one Lua table: `api`, `id`, `name`, `quality`,
+`enabled_by_default`, optional `shelves` and `settings`, and the functions
+`search`, `resolve`, optional `browse` and `check`. Every function gets a
+`ctx` with the HTTP helpers, JSON, `url_escape`, the user's settings values,
+the `Entry` constructors, the OPDS parser and a logger — so a provider never
+`require`s an OpenShelf module. That matters twice: KOReader loads
+`provider-*` plugins before OpenShelf is on `package.path`, and in-tree
+providers must stay loadable by the offline tests.
+
+Providers build their own entries (`ctx.Entry.new`) so they can rank rows
+individually; the host then **overwrites `provider` and `source`** on every
+row and fills `quality` from the provider when a row has none, so routing and
+labels are always right.
+
+### 9.2 Identity
+`id` replaces the display name as the key everywhere: result slots,
+`disabled_sources`, `Entry.id` (`provider|locator`), library records. The
+three built-ins get `gutendex`, `internetarchive`, `doab`; the library JSON
+migrates v1 → v2 once on load, after writing a `.v1.bak`, and the browse
+cache is simply invalidated by its new `id:key` keys. Locator identity gains a
+fallback for third-party shapes: `url`, else `identifier`, else `id`, else all
+fields sorted.
+
+### 9.3 Three ways in
+1. **In-tree**: `openshelf.koplugin/providers/<id>.lua`, listed in order in
+   `openshelf_providers.lua`. Built-ins move there and register through the
+   same `Catalog.register` as everything else, so parity is structural.
+2. **KOReader plugin** `provider-openshelf-<id>.koplugin`: registers with
+   KOReader's core `Provider` singleton (`frontend/provider.lua`, in KOReader
+   since Dec 2024, so present on the Clara's v2026.07.2). The registry's
+   feature list is a hardcoded whitelist that only knows `exporter`; the
+   template adds the `openshelf` slot itself (one line) and we open a two-line
+   upstream PR. Plugin instances are created in *path order*, so `openshelf`
+   inits before any `provider-*` plugin — OpenShelf therefore reads the
+   registry **lazily when it opens**, never at `init()`.
+3. **Drop-in file** under `<settings>/openshelf/providers/`
+   (`/mnt/onboard/.adds/koreader/settings/openshelf/providers/` on the Kobo),
+   created on first open with a README. Scanned on each open, each file
+   loaded once per process.
+
+Registration order is built-ins, plugins by id, drop-ins by id. A duplicate
+`id` loses and is shown dimmed as such; invalid providers (shape, `api`, load
+error) are likewise **dimmed in Sources with the reason**, never a modal.
+`enabled_by_default` is honored for externals: installing is the opt-in.
+
+### 9.4 What the contract covers (api 1)
+Everything parked in §6 comes in through the contract: browse shelves,
+per-provider settings (text / secret / toggle / choice, `required` → the
+source reads *Needs setup* and is skipped), authenticated downloads
+(`resolve` may return `{url, headers}`; http_util and the downloader pass
+headers through), an optional `check(ctx)` surfaced as *Test connection*, and
+the borrow / buy actions. **Borrow** rows resolve and download like downloads
+with a *Borrow* button and are recorded in My books; **buy** rows carry a web
+URL shown as text + QR (KOReader's `QRMessage`) and never download. Non-
+download rows are capped below any download in dedupe, so a free edition
+always wins. Cover URLs stay unauthenticated in api 1.
+
+### 9.5 UI
+- **Sources** gains *Arrange sources* (stock `SortWidget`, as Dispatcher and
+  Collections use); the stored `source_order` of ids drives result slots,
+  home shelf order and the filter dialog. New sources append.
+- Each source becomes a **submenu**: *Enabled* · declared fields · *Test
+  connection* when `check` exists · *Shelves on home* when it declares
+  shelves. Home shows shelves from every enabled provider in source order.
+- Settings storage: `source_order`, `enabled_sources` (for default-off
+  providers, beside today's `disabled_sources`), `provider_settings[id]`.
+
+### 9.6 Hardening
+`jobs.lua` gets a per-job deadline, 60 s for search / browse / resolve /
+check, in subprocess mode only (inline emulator mode cannot interrupt a
+blocking call); the slot reads "timed out". Downloads are exempt: they stream
+with progress and have their own socket timeouts. DRM-free stays a **policy**
+in `PROVIDERS.md`; the host does not inspect files (decision 46).
+
+### 9.7 Dev kit and release
+`PROVIDERS.md`; `tools/provider_check.lua` (validate → search → JSON
+round-trip → resolve → HEAD, the headless test becomes a thin wrapper over
+it); a template `provider-openshelf-template.koplugin` that `scripts/emu.sh`
+also symlinks so a walkthrough exercises the external path; one example
+drop-in file. **One release, v0.6.0.** The spec is written and reviewed
+before code; the KOReader PR is opened only on explicit go.

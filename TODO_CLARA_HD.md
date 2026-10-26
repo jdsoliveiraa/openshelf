@@ -191,8 +191,17 @@ cache; Internet Archive excludes borrow-only items and sorts by downloads.
 Emulator workflow: `scripts/emu.sh` (+ `tools/emu-walkthrough*.lua`).
 
 **Next:**
+- [ ] **v0.6 modular providers** — contract in `PROVIDERS.md` (api 1), host
+      design in `DESIGN.md` §9 (decisions 37–57, grilled 2026-10-26). Three ways
+      in: in-tree, `provider-openshelf-*.koplugin` via KOReader's core `Provider`
+      registry, drop-in files under `<settings>/openshelf/providers/`. Stable
+      provider `id`s + one-time library migration, `ctx`-based API, per-source
+      settings/`check`, arrangeable source order, 60 s job deadline, borrow/buy
+      rows. Spec written first; build + single release follow.
 - [ ] **Standard Ebooks via authenticated OPDS** (opt-in; user pastes a patron
-      token in Sources). `opds.lua` parser is ready. **Do NOT scrape SE** (see §6).
+      token in Sources). `opds.lua` parser is ready; build it as the first
+      provider on `PROVIDERS.md` (secret `token` field + `check`). **Do NOT
+      scrape SE** (see §6).
 - [ ] **Async cover loading** — covers currently fetched synchronously per page
       (brief freeze; bounded since v0.4 by 5 s block / 10 s total per cover).
       Load placeholders first, swap in covers. Same for the serial provider queries.

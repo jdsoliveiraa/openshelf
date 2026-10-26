@@ -3,9 +3,10 @@
 Searches free / public-domain ebook catalogs (Gutenberg, Internet Archive, DOAB)
 and downloads straight onto the device. Plugin code lives in `openshelf.koplugin/`
 (flat modules; siblings `require` each other by filename). `DESIGN.md` is the UI
-spec (36 grilled decisions — don't relitigate). `TODO_CLARA_HD.md` is the device
-log: roadmap, decisions, and hard-won gotchas — read §6–7 before changing network,
-UI, or source-related behaviour.
+spec (57 grilled decisions — don't relitigate; §9 = modular providers).
+`PROVIDERS.md` is the provider contract (api 1) third-party authors read.
+`TODO_CLARA_HD.md` is the device log: roadmap, decisions, and hard-won gotchas —
+read §6–7 before changing network, UI, or source-related behaviour.
 
 ## Commands
 
