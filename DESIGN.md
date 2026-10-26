@@ -281,9 +281,13 @@ book.
 - **Kobo launcher** (`kobo/`): a KFMon watch (`kfmon/openshelf.ini`) whose
   action (`openshelf.sh`) exports the env var and execs KOReader's own start
   script, plus `openshelf.png` (drawn by `tools/make-icon.py`). NickelMenu's
-  kfmon generator lists it by label, so no NickelMenu config changes.
-  Installed by `scripts/deploy-launcher.sh`; KFMon and Nickel pick it up
-  after one reboot.
+  kfmon generator lists it by label, so no NickelMenu config changes; a
+  separate NickelMenu file adds "Import books" (`nickel_misc :
+  rescan_books_full`), because Nickel imports new files, the icon and Wi-Fi
+  downloads alike, only after a USB session. Installed by
+  `scripts/deploy-launcher.sh`; KFMon picks the watch up after one reboot,
+  and NickelMenu launches it through KFMon's IPC even before the icon is
+  imported.
 - Verified on the emulator with `tools/emu-walkthrough-3.lua`: home at start
   from the setting alone → open a book → KOReader "Home" → OpenShelf is back
   → X → file manager. The same run with the setting off and the env var set

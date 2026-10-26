@@ -1,14 +1,16 @@
 #!/usr/bin/env bash
 # Install the OpenShelf launcher on the Kobo over SSH: the KFMon watch, its
-# script and the icon (kobo/). Afterwards "OpenShelf" appears in NickelMenu
-# (its kfmon generator lists every watch) and, once Nickel has indexed the PNG,
-# as a tappable icon in the Kobo library. Tapping either starts KOReader with
-# OpenShelf as the home screen for that session.
+# script, the icon and an "Import books" NickelMenu entry (kobo/). Afterwards
+# "OpenShelf" appears in NickelMenu (its kfmon generator lists every watch) and
+# starts KOReader with OpenShelf as the home screen for that session; the tile
+# in the Kobo library appears once Nickel has imported the PNG.
 #
-# KFMon only reads its config at boot / after a USB session and Nickel indexes
-# new files on the same occasions, so REBOOT the Kobo afterwards
-# (NickelMenu → Reboot). Same prereqs as scripts/deploy.sh (SSH server started,
-# `Host kobo` in ~/.ssh/config).
+# KFMon reads new watch configs at boot / after a USB session, and Nickel
+# imports new files (the icon, books OpenShelf downloaded) only after a USB
+# session — real or faked by NickelMenu → Import books. So afterwards: reboot
+# once (NickelMenu → Reboot), then NickelMenu → Import books for the tile.
+# Same prereqs as scripts/deploy.sh (SSH server started, `Host kobo` in
+# ~/.ssh/config). Only files named openshelf* are written; nothing of yours is touched.
 #
 # Usage: scripts/deploy-launcher.sh [ssh-host]      (default host alias: kobo)
 set -euo pipefail
@@ -18,8 +20,8 @@ SSH=(ssh -o BatchMode=yes -o ConnectTimeout=8 "$HOST")
 cd "$(dirname "$0")/.."
 
 # src → destination pairs (macOS ships bash 3.2, so no associative arrays)
-SRCS=(kobo/openshelf.sh kobo/kfmon/openshelf.ini kobo/openshelf.png)
-DSTS=(/mnt/onboard/.adds/openshelf/openshelf.sh /mnt/onboard/.adds/kfmon/config/openshelf.ini /mnt/onboard/openshelf.png)
+SRCS=(kobo/openshelf.sh kobo/kfmon/openshelf.ini kobo/openshelf.png kobo/nm/openshelf-import)
+DSTS=(/mnt/onboard/.adds/openshelf/openshelf.sh /mnt/onboard/.adds/kfmon/config/openshelf.ini /mnt/onboard/openshelf.png /mnt/onboard/.adds/nm/openshelf-import)
 
 echo "Installing the OpenShelf launcher on $HOST ..."
 "${SSH[@]}" "mkdir -p /mnt/onboard/.adds/openshelf /mnt/onboard/.adds/kfmon/config"
@@ -37,5 +39,5 @@ for i in "${!SRCS[@]}"; do
   fi
   echo "  ok  ${DSTS[$i]}"
 done
-echo "Installed. Reboot the Kobo (NickelMenu → Reboot) so KFMon loads the watch and Nickel indexes the icon."
+echo "Installed. If the KFMon watch is new, reboot the Kobo (NickelMenu → Reboot); then NickelMenu → Import books makes the icon show in the library."
 echo "If the entry is missing afterwards: ssh $HOST /mnt/onboard/.adds/kfmon/bin/kfmon-printlog.sh | tail"

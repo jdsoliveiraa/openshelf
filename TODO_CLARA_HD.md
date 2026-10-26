@@ -66,17 +66,22 @@
       `/mnt/onboard/OpenShelf/` and shows in the stock library after leaving KOReader.
       If the plugin is missing from the menu: `ssh kobo cat /mnt/onboard/.adds/koreader/crash.log`.
 - [ ] **Verify v0.5.1 home mode + launcher on-device** (deployed 2026-10-26 over
-      SSH, `DESIGN.md` §8). After a reboot: "OpenShelf" in NickelMenu (kfmon
-      generator) and `openshelf.png` in the library; tapping starts KOReader
-      straight into OpenShelf; closing a book returns to OpenShelf; X shows the
-      file manager. Gear → Home mode makes it permanent for a normal KOReader
-      launch. If the NickelMenu entry is missing:
+      SSH, `DESIGN.md` §8). ✅ After the reboot "OpenShelf" showed in NickelMenu
+      (kfmon generator). ⏳ Tapping it should start KOReader straight into
+      OpenShelf (KFMon ≥1.4.1 launches IPC-triggered watches even before Nickel
+      indexed the icon); closing a book returns to OpenShelf; X shows the file
+      manager. ✅ "Import books" NickelMenu entry installed 2026-10-26 03:26
+      (`.adds/nm/openshelf-import`); `kfmon-ipc list` shows `openshelf.png`.
+      ⏳ Tap Import books once → tile in the library. Gear → Home mode makes it
+      permanent for a normal KOReader launch. If anything is missing:
       `ssh kobo /mnt/onboard/.adds/kfmon/bin/kfmon-printlog.sh | tail`.
 - [ ] **Verify OpenShelf v0.5 on-device** (built and verified on the macOS emulator
       2026-10-26, see `DESIGN.md` §7; deployed over SSH the same day). Watch especially:
-      (a) the **subprocess path** — search/covers/downloads fork a child per job
-      (`jobs.lua`); on the Mac emulator children die, so only the device can prove
-      it; if it fails, `OPENSHELF_INLINE_JOBS=1` is the escape hatch;
+      (a) ✅ the **subprocess path works on the device** — crash.log of the 02:34
+      session: 11 forked children, 10 ok, 1 failed (`gutendex ?sort=descending`
+      "wantread" = read timeout on the New shelf; gutendex is slow, consider a
+      longer timeout for browse feeds); a download completed (Freud, 116 kB) and
+      Open launched the reader. `OPENSHELF_INLINE_JOBS=1` stays the escape hatch;
       (b) tap vs hold on rows/cells (hold = download);
       (c) the "OpenShelf" KOReader Collection appears in the file manager;
       (d) a DOAB result with both EPUB and PDF shows format chips in detail;
@@ -85,10 +90,13 @@
       widget never rendered outside KOReader. Watch: layout, tap→correct row,
       page-build freeze while covers download, placeholder for missing covers.
       Fallback: turn OFF "Show cover thumbnails" → plain text list.
-- [ ] **Verify DOAB live** — blocked (403) from datacenter IPs during testing;
-      should work from the Kobo's residential IP. If it errors, the results
-      footer (cover view and text list alike, since v0.4) shows
-      "⚠ 1 source errored" and everything else still works.
+- [ ] **DOAB is 403 from the Kobo too** — crash.log has five
+      `directory.doabooks.org/rest/search … 403 Forbidden` from the device
+      (2026-10-23 and 2026-10-26), so the "datacenter IP" theory was wrong (the
+      Mac on the same home line gets 403 as well). Likely the legacy DSpace
+      `/rest` API being retired or a bot filter; see the probe notes in §6.
+      Until fixed, the source just shows as errored and everything else works —
+      consider disabling it by default.
 - [ ] Grab `.adds/koreader/crash.log` if OpenShelf ever fails to load.
 
 ---
@@ -322,7 +330,19 @@ diskutil eject /Volumes/KOBOeReader
 - **KFMon reads its config only at boot / after a USB session** — a new
   `.adds/kfmon/config/*.ini` (the OpenShelf launcher) needs a reboot. NickelMenu's
   `generator : main : kfmon` then lists the watch by its `label`, no NM config
-  edit needed. Nickel indexes a new PNG on the same occasions.
+  edit needed, and launches it over KFMon's IPC even if the icon was never indexed.
+- **DOAB / OAPEN REST search is IP-allowlisted** — `…/rest/search` answers
+  `403 "You address is not allowed to access this API."` from the Kobo, the Mac and
+  any User-Agent (probed 2026-10-26; `library.oapen.org/rest` identical; the DSpace 7
+  `/server/api` path is 404). Only OAI-PMH (`/oai/request`, harvesting, no search) is
+  open. Options: ask DOAB for allowlisting (no — IPs change), harvest OAI-PMH into a
+  local index (heavy), or drop/replace the source. Decide before the next release.
+- **Nickel imports new files only after a USB session** — a reboot does NOT index
+  a new PNG (confirmed 2026-10-26: the launcher icon stayed out of the library) and
+  neither does leaving KOReader, so Wi-Fi downloads don't show in the stock library
+  either. NickelMenu `nickel_misc : rescan_books_full` fakes a connect/disconnect
+  cycle; `kobo/nm/openshelf-import` adds it as "Import books". A fresh icon may stay
+  "processing" for KFMon's own tap path until the next boot (thumbnail cache).
 - **KOReader rebuilds the file manager, and re-runs every plugin's `init()`, after
   each book** — `init()` runs several times per process. Anything that must happen
   once (the `OPENSHELF_DEV_SCRIPT` hook) needs a module-level guard; the home-mode

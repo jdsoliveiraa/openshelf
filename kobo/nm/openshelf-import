@@ -1,0 +1,5 @@
+# Installed by OpenShelf's scripts/deploy-launcher.sh as .adds/nm/openshelf-import.
+# Nickel only imports new files (books OpenShelf downloaded over Wi-Fi, the
+# openshelf.png launcher tile) after a USB session; this fakes a full USB
+# connect/disconnect cycle. NickelMenu's field separator is ':' — no colons in labels.
+menu_item : main : Import books : nickel_misc : rescan_books_full

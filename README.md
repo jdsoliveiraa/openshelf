@@ -18,13 +18,14 @@ catalogs.
 | ----------------- | ------------------------------------------------- | ------ |
 | Project Gutenberg | ~70k public-domain classics (Gutendex API); also feeds the Popular / New shelves | ✅ working |
 | Internet Archive  | Public-domain texts with EPUBs, sorted by downloads; lending-library (borrow-only) items are excluded¹ | ✅ working |
-| DOAB              | Open-access scholarly books (DSpace REST), EPUB or PDF | ✅ on-device² |
+| DOAB              | Open-access scholarly books (DSpace REST), EPUB or PDF | ⚠️ 403 since 2026-10² |
 
 ¹ Most Internet Archive hits for popular titles are borrow-only: they list an
 EPUB that answers 401 without an archive.org login. The query excludes
 `access-restricted-item:true` and `resolve()` refuses one that slips through.
-² DOAB blocks datacenter IPs (403), so it only works from a residential
-connection like the Kobo itself; a failing source never blocks the others.
+² DOAB's legacy `/rest` search currently answers 403 Forbidden, from the Kobo
+as well as from a laptop; the source shows as errored and never blocks the
+others. Being investigated (see `TODO_CLARA_HD.md`).
 
 **Why not Standard Ebooks / Feedbooks?** Standard Ebooks bans scrapers (its
 download links are honeypots) and gates its OPDS feed behind a patron login; it
@@ -123,10 +124,13 @@ and give it a `quality` in `entry.lua`.
 3. Restart KOReader → **OpenShelf** appears in the main menu. You can also bind
    the *OpenShelf* action to a gesture (it is registered with the Dispatcher).
 4. Kobo, optional: `scripts/deploy-launcher.sh` installs a KFMon watch, its
-   script and an icon (`kobo/`). After one reboot, **OpenShelf** shows in
-   NickelMenu and in the Kobo library, and starts KOReader with OpenShelf as
-   the home screen for that session (`OPENSHELF_AUTOOPEN=1`). Turn on *Home
-   mode* in the settings to get the same when KOReader is launched normally.
+   script, an icon and an *Import books* NickelMenu entry (`kobo/`). After one
+   reboot, **OpenShelf** shows in NickelMenu and starts KOReader with OpenShelf
+   as the home screen for that session (`OPENSHELF_AUTOOPEN=1`). Nickel only
+   imports new files after a USB session, so tap *Import books* once for the
+   library tile, and whenever you want Wi-Fi downloads to show in the stock
+   library. Turn on *Home mode* in the settings to get the same behaviour when
+   KOReader is launched normally.
 
 ## Development
 
