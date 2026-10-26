@@ -47,5 +47,9 @@ CI runs the lint, a LuaJIT load-check of every file, and the unit test.
 
 ## Deploy
 
-USB copy per `TODO_CLARA_HD.md` §5 — always `cp … && sync && sync` in one command
-(§6: the USB volume drops mid-operation). Bump `openshelf.koplugin/version.lua`.
+Bump `openshelf.koplugin/version.lua`, then `scripts/deploy.sh` over SSH: the Kobo
+must have its SSH server started (Settings → Network → SSH server; on-demand,
+key-only, `Host kobo` in `~/.ssh/config`). The script stages, swaps, syncs and
+md5-verifies the plugin folder; KOReader must then be restarted on the device
+(Exit → Restart KOReader). USB fallback per `TODO_CLARA_HD.md` §5 — always
+`cp … && sync && sync` in one command (§6: the USB volume drops mid-operation).

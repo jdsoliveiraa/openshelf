@@ -126,6 +126,10 @@ Everything runs under LuaJIT, the same runtime as the device.
 GitHub Actions runs the lint, a LuaJIT load-check of every file, and the offline
 unit test on every push.
 
+To push a build to a Kobo over Wi-Fi, start KOReader's SSH server on the device
+(Settings → Network → SSH server) and run `scripts/deploy.sh` — it copies the
+plugin over scp, verifies checksums, and tells you to restart KOReader.
+
 ## Roadmap
 
 - [ ] Standard Ebooks via **authenticated OPDS** (opt-in, patron token)
