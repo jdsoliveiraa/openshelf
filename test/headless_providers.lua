@@ -77,8 +77,8 @@ for i, p in ipairs(Catalog.providers) do
 end
 hr()
 
-local entries, errors, collapsed = Catalog.search(QUERY, { per_provider = 8 })
-print(("Catalog.search: %d entries after dedupe, %d duplicate(s) merged"):format(#entries, collapsed or 0))
+local entries, errors, collapsed = Catalog.searchAll(QUERY, { per_provider = 8 })
+print(("Catalog.searchAll: %d entries after dedupe, %d duplicate(s) merged"):format(#entries, collapsed or 0))
 if errors and #errors > 0 then
     print("source errors:")
     for _, e in ipairs(errors) do
@@ -115,9 +115,20 @@ hr()
 -- resolve first of each working source
 for _, src in ipairs(order) do
     local r = by_source[src][1]
-    local url, err = r.resolve()
+    assert(type(r.locator) == "table" and r.resolve == nil, "entries must be plain data with a locator")
+    local url, err = Catalog.resolve(r)
     if url then
         print(("resolve OK   [%s] -> %s"):format(src, url))
+        if src == "Internet Archive" then
+            -- lending-library items answer 401; a free EPUB must HEAD 200 (v0.4.2)
+            local headers, herr = HttpUtil.head(url)
+            if headers then
+                print(("HEAD OK      [%s] content-length=%s"):format(src, tostring(headers["content-length"])))
+            else
+                fail = true
+                print(("HEAD FAIL    [%s] -> %s"):format(src, tostring(herr)))
+            end
+        end
     else
         if not EXPECTED_FAIL[src] then fail = true end
         print(("resolve FAIL [%s] -> %s"):format(src, tostring(err)))
@@ -129,7 +140,7 @@ hr()
 local function try_download(src)
     local r = by_source[src] and by_source[src][1]
     if not r then print(("download SKIP [%s] (no result)"):format(src)); return end
-    local url, rerr = r.resolve()
+    local url, rerr = Catalog.resolve(r)
     if not url then print(("download SKIP [%s] (resolve: %s)"):format(src, rerr)); return end
     local target = os.tmpname()
     local path, derr = HttpUtil.download(url, target)

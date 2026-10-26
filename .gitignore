@@ -11,3 +11,4 @@
 # Local test output
 /tmp/
 *.epub
+.kohome/

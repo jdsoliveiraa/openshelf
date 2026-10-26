@@ -12,7 +12,7 @@ function Dedupe.run(entries)
     local result = {}
     local seen = {}            -- dedup_key -> index in result
     local collapsed = 0
-    for _, e in ipairs(entries) do
+    for __, e in ipairs(entries) do
         local k = e.dedup_key
         local idx = seen[k]
         if not idx then

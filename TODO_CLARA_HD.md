@@ -65,7 +65,16 @@
       downloaded → Open / Download again" prompt, book lands in
       `/mnt/onboard/OpenShelf/` and shows in the stock library after leaving KOReader.
       If the plugin is missing from the menu: `ssh kobo cat /mnt/onboard/.adds/koreader/crash.log`.
-- [ ] **Verify OpenShelf cover view on-device** — `coverbrowser.lua` is a custom
+- [ ] **Verify OpenShelf v0.5 on-device** (built and verified on the macOS emulator
+      2026-10-26, see `DESIGN.md` §7; not yet deployed). Watch especially:
+      (a) the **subprocess path** — search/covers/downloads fork a child per job
+      (`jobs.lua`); on the Mac emulator children die, so only the device can prove
+      it; if it fails, `OPENSHELF_INLINE_JOBS=1` is the escape hatch;
+      (b) tap vs hold on rows/cells (hold = download);
+      (c) the "OpenShelf" KOReader Collection appears in the file manager;
+      (d) a DOAB result with both EPUB and PDF shows format chips in detail;
+      (e) e-ink refresh feel on page turns ("partial") and progress ticks ("ui").
+- [ ] **Verify OpenShelf cover view on-device** (superseded by v0.5; keep until deployed) — `coverbrowser.lua` is a custom
       widget never rendered outside KOReader. Watch: layout, tap→correct row,
       page-build freeze while covers download, placeholder for missing covers.
       Fallback: turn OFF "Show cover thumbnails" → plain text list.
@@ -154,13 +163,17 @@ Internet Archive query sanitizing, offline unit test + luacheck + GitHub CI.
 0.4.1: `version.lua` → `openshelf_version.lua` (name clash, §6), `_meta.lua`
 drops the deprecated `name` field, unit test guards module names.
 
-**In progress (v0.5, started 2026-10-26): UI redesign per `DESIGN.md`** — home
-screen (search, recents, My books, browse shelves), results list/grid with a
-toolbar (filter, view toggle, load more), book detail page with progress, My
-books by reading status, settings behind a gear. Parallel search / downloads /
-covers via subprocesses; entries become plain data with a `locator`. Single
-release, verified first on the macOS KOReader emulator (`~/personal/koreader`,
-`./kodev run -s kobo-clara`), then deployed over SSH.
+**Built (v0.5, 2026-10-26; emulator-verified, awaiting device deploy): UI redesign
+per `DESIGN.md`** — home screen (search row, recent-search chips, My books shelf,
+Popular/New on Gutenberg shelves from a 24 h cache), results as list or 3×3 grid
+with a toolbar (status · filter · view toggle), load more, tap = detail / hold =
+download with progress on the row, detail page (cover, metadata, description,
+Download → progress + Cancel → Open/Done, EPUB/PDF chips), My books by reading
+status + "See all", settings behind a gear, Dispatcher action. Entries are plain
+data with a `locator`; search/covers/downloads run in forked subprocesses
+(`jobs.lua`); own library JSON + KOReader Collection "OpenShelf"; cover disk
+cache; Internet Archive excludes borrow-only items and sorts by downloads.
+Emulator workflow: `scripts/emu.sh` (+ `tools/emu-walkthrough*.lua`).
 
 **Next:**
 - [ ] **Standard Ebooks via authenticated OPDS** (opt-in; user pastes a patron
@@ -200,6 +213,10 @@ luajit test/headless_providers.lua "pride and prejudice"   # exits non-zero on f
 
 # load-check every file with LuaJIT
 for f in openshelf.koplugin/*.lua test/*.lua; do luajit -e "assert(loadfile('$f'))"; done
+
+# KOReader emulator (from-source checkout at ../koreader, see CLAUDE.md "Emulator")
+scripts/emu.sh                                               # opens straight into OpenShelf
+scripts/emu.sh --walk tools/emu-walkthrough.lua --shots /tmp/shots   # scripted walkthrough + PNGs
 
 # deploy to device over SSH (preferred) — on the Kobo: Settings → Network →
 # SSH server → start; then (stages, swaps, syncs, md5-verifies all files):
@@ -276,6 +293,22 @@ diskutil eject /Volumes/KOBOeReader
 - **Lucene specials in user text break Internet Archive search** — a `:` or `(`
   makes advancedsearch return an error (seen as zero results). Strip them and
   lowercase (`AND`/`OR`/`NOT` are operators) — `InternetArchive.sanitizeQuery`.
+- **`_` as a loop variable shadows gettext** — `for _, x in ipairs(…)` inside a
+  file with `local _ = require("gettext")` makes the next `_("…")` call a number
+  call. Use `__` / `___` (luacheck's `21[1-3]/_.*` ignore hides it).
+- **KOReader's bundled JSON decodes `null` as a function** (LuaJSON sentinel), so
+  `item.name or "x"` keeps the function. `Entry.download` coerces non-strings.
+- **Forked subprocesses die on the macOS emulator** the moment they use the
+  network (same fork + HTTPS works in a bare luajit; it's the Cocoa/SDL process).
+  `jobs.lua` runs inline there automatically. Linux devices are unaffected —
+  KOReader's own newsdownloader/OPDS use the same `runInSubProcess`.
+- **`screencapture` is refused for the terminal on this Mac** — review emulator
+  screens with `Screen:shot(path)` from a dev script (`OPENSHELF_DEV_SCRIPT`).
+- **KOReader's own `kodev` needs `wget` and bash ≥4** — neither is in its macOS
+  package list; `brew install wget` and put Homebrew bash first on PATH.
+- **`FrameContainer{width=,height=}` doesn't size the frame** — size the child
+  with an exact `dimen` (`LeftContainer`/`CenterContainer`) and add border +
+  padding yourself; `getSize()` is content + border + padding.
 - **Firmware updates disable KFMon** → the KOReader launcher icon vanishes; rerun
   the one-click installer to restore (books/settings survive).
 

@@ -62,7 +62,7 @@ end
 -- Skips paid ("buy") acquisition links so only free downloads come through.
 function OPDS.acquisition_href(links, mime)
     mime = mime or "application/epub+zip"
-    for _, l in ipairs(links or {}) do
+    for __, l in ipairs(links or {}) do
         local rel = l.rel or ""
         local is_acq = rel:find("acquisition", 1, true) ~= nil
         local is_buy = rel:find("buy", 1, true) ~= nil

@@ -233,3 +233,26 @@ their covers. Refresh runs in a subprocess when stale and online.
 Standard Ebooks via authenticated OPDS · borrow/buy discovery bridge · more
 sources · other content types. The `action` field and group-by-action code stay
 so these can slot in later.
+
+## 7. Build notes (2026-10-26)
+
+Built in one pass and verified on the macOS KOReader emulator with scripted
+walkthroughs (`tools/emu-walkthrough*.lua`, screenshots via `Screen:shot`).
+Deviations and findings, all deliberate:
+
+- **Recent searches render as two-column chips** (8 fit in four short rows)
+  instead of eight full rows, so the shelves still fit on the first page.
+- **Internet Archive results are sorted by download count** — its relevance
+  ranking put fan fiction and scripts above real editions. Borrow-only items
+  are excluded (merged from v0.4.2).
+- **Title bars carry no subtitle**; auto-paged screens (home, My books) show a
+  slim "1 / 2" footer instead, and shelf headers stay with their covers.
+- **Forked jobs on the macOS emulator**: a child of the Cocoa/SDL process dies
+  as soon as it touches the network, while the same fork + HTTPS works in a
+  bare luajit. `jobs.lua` runs tasks inline on that platform (same callbacks,
+  one tick later) and uses real subprocesses on devices. The subprocess path
+  is therefore **verified only by code review until the first device run**.
+- **DOAB offers EPUB + PDF chips** when both bitstreams exist (`alternates`).
+- The `hold` gesture could not be exercised on the emulator (no touch); the
+  walkthrough calls the handlers directly. Verify tap-vs-hold on the Clara.
+

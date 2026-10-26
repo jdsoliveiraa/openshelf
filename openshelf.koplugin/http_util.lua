@@ -5,6 +5,9 @@ Thin HTTP helpers over LuaSocket, matching the patterns KOReader itself uses
 Why socketutil's sinks instead of plain ltn12 ones: LuaSocket resets its own
 timer on every chunk, so a slow trickle never trips the "total" timeout.
 socketutil.table_sink / file_sink enforce a real wall-clock limit on the body.
+
+These run inside forked subprocesses too (search, covers, downloads): nothing
+here may touch UIManager or widgets.
 --]]
 local socket = require("socket")
 local socketutil = require("socketutil")
@@ -63,12 +66,43 @@ function HttpUtil.getJSON(url, opts)
     return decoded
 end
 
+--- HEAD a URL. Returns the response headers (lower-case keys) or nil + error.
+-- Used to learn Content-Length before a download so progress can be a
+-- percentage. Many hosts answer HEAD; when one doesn't, callers fall back to
+-- an indeterminate bar.
+function HttpUtil.head(url, opts)
+    opts = opts or {}
+    local block_t, total_t = socketutil:set_timeout(
+        opts.block_timeout or 10, opts.total_timeout or 20)
+    local request = {
+        url = url,
+        method = "HEAD",
+        headers = { ["User-Agent"] = UA },
+    }
+    local code, headers, status = socket.skip(1, requester_for(url).request(request))
+    socketutil:reset_timeout()
+    if code ~= 200 or type(headers) ~= "table" then
+        return nil, describe(code, status, block_t, total_t)
+    end
+    return headers
+end
+
+--- Content-Length for a URL via HEAD, or nil.
+function HttpUtil.contentLength(url)
+    local headers = HttpUtil.head(url)
+    local len = headers and (headers["content-length"] or headers["Content-Length"])
+    return tonumber(len)
+end
+
 --- Stream a URL to disk. Returns the target path, or nil + error message.
-function HttpUtil.download(url, target_path)
+-- opts.block_timeout / opts.total_timeout (seconds) override the FILE_* defaults.
+function HttpUtil.download(url, target_path, opts)
+    opts = opts or {}
     local f, ferr = io.open(target_path, "wb")
     if not f then return nil, ferr end
     local block_t, total_t = socketutil:set_timeout(
-        socketutil.FILE_BLOCK_TIMEOUT, socketutil.FILE_TOTAL_TIMEOUT)
+        opts.block_timeout or socketutil.FILE_BLOCK_TIMEOUT,
+        opts.total_timeout or socketutil.FILE_TOTAL_TIMEOUT)
     local request = {
         url = url,
         method = "GET",
