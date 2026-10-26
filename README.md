@@ -16,7 +16,7 @@ catalogs.
 | Provider          | What it is                                   | Status |
 | ----------------- | -------------------------------------------- | ------ |
 | Project Gutenberg | ~70k public-domain classics (Gutendex API)   | ✅ working |
-| Internet Archive  | Public-domain texts with EPUBs               | ✅ working |
+| Internet Archive  | Freely downloadable texts with EPUBs (lending-library items excluded) | ✅ working |
 | DOAB              | Open-access scholarly books (DSpace REST)     | ✅ on-device¹ |
 
 ¹ DOAB blocks datacenter IPs (403), so it only works from a residential

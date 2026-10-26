@@ -149,6 +149,26 @@ end
 try_download("Project Gutenberg")
 hr()
 
+-- Internet Archive: the resolved EPUB must be freely downloadable. Lending-library
+-- items also list an EPUB but answer 401; the search excludes them (v0.4.2).
+do
+    local r = by_source["Internet Archive"] and by_source["Internet Archive"][1]
+    local url = r and r.resolve()
+    if url then
+        local https = require("ssl.https")
+        local _, code = https.request{ url = url, method = "HEAD" }
+        if code == 200 then
+            print(("IA HEAD OK   -> 200 %s"):format(url))
+        else
+            fail = true
+            print(("IA HEAD FAIL -> %s %s"):format(tostring(code), url))
+        end
+    else
+        print("IA HEAD SKIP (no resolvable Internet Archive result)")
+    end
+end
+hr()
+
 -- validate cover thumbnail URLs return real image bytes (decode happens in
 -- KOReader via RenderImage; here we just confirm the URL + image magic)
 local function image_kind(bytes)

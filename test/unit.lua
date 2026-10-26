@@ -71,6 +71,13 @@ eq(IA.sanitizeQuery('"pride" AND prejudice'), "pride and prejudice", "quotes str
 eq(IA.sanitizeQuery("  ::: ((( "), nil, "nothing searchable -> nil")
 eq(IA.sanitizeQuery(nil), nil, "nil -> nil")
 eq(IA.sanitizeQuery("a+b-c/d\\e"), "a b c d e", "operators become spaces")
+check(IA.buildQuery("pride and prejudice"):find("AND NOT access-restricted-item:true", 1, true) ~= nil,
+      "query excludes lending-library (borrow-only) items", IA.buildQuery("pride and prejudice"))
+check(IA.isRestricted({ ["access-restricted-item"] = "true" }), "restricted flag as string")
+check(IA.isRestricted({ ["access-restricted-item"] = true }), "restricted flag as boolean")
+check(not IA.isRestricted({ ["access-restricted-item"] = "false" }), "unrestricted string")
+check(not IA.isRestricted({}), "missing flag -> not restricted")
+check(not IA.isRestricted(nil), "nil fields -> not restricted")
 
 print("== OPDS.parse ==")
 local feed = [[

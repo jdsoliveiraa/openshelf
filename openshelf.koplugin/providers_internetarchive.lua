@@ -2,7 +2,9 @@
 Internet Archive provider.
 Search uses advancedsearch (returns identifiers); the EPUB filename is only known
 per-item, so resolve() lazily hits the metadata API when the user picks a result.
-Constrained to text items that actually ship an EPUB.
+Constrained to text items that actually ship an EPUB and are freely
+downloadable: lending-library items (`access-restricted-item`) list an EPUB too,
+but the file answers 401 without an archive.org login, so they are excluded.
 --]]
 local HttpUtil = require("http_util")
 local Entry = require("entry")
@@ -29,15 +31,30 @@ function InternetArchive.sanitizeQuery(query)
     return q
 end
 
+--- True when an advancedsearch doc or a metadata block marks the item as
+-- borrow-only (the field arrives as the string "true", sometimes a boolean).
+function InternetArchive.isRestricted(fields)
+    local v = type(fields) == "table" and fields["access-restricted-item"]
+    return v == true or (type(v) == "string" and v:lower() == "true")
+end
+
+--- Full Lucene query for a sanitized free-text string.
+function InternetArchive.buildQuery(clean)
+    return string.format(
+        "(%s) AND mediatype:texts AND format:(EPUB) AND NOT access-restricted-item:true",
+        clean)
+end
+
+local RESTRICTED_MSG = "borrow-only on the Internet Archive (needs an archive.org login)"
+
 function InternetArchive.search(query, limit)
     limit = limit or 20
     local clean = InternetArchive.sanitizeQuery(query)
     if not clean then return {} end
-    local q = url_escape(string.format(
-        "(%s) AND mediatype:texts AND format:(EPUB)", clean))
+    local q = url_escape(InternetArchive.buildQuery(clean))
     local url = string.format(
         "https://archive.org/advancedsearch.php?q=%s"
-        .. "&fl[]=identifier&fl[]=title&fl[]=creator"
+        .. "&fl[]=identifier&fl[]=title&fl[]=creator&fl[]=access-restricted-item"
         .. "&rows=%d&page=1&output=json",
         q, limit)
 
@@ -48,7 +65,8 @@ function InternetArchive.search(query, limit)
     local results = {}
     for _, doc in ipairs(docs) do
         local identifier = doc.identifier
-        if identifier then
+        -- second line of defence should the index lag behind the flag
+        if identifier and not InternetArchive.isRestricted(doc) then
             results[#results + 1] = Entry.download{
                 title  = first(doc.title) or identifier,
                 author = first(doc.creator) or "Unknown",
@@ -59,6 +77,9 @@ function InternetArchive.search(query, limit)
                         "https://archive.org/metadata/" .. identifier)
                     if not meta or not meta.files then
                         return nil, "no metadata for item"
+                    end
+                    if InternetArchive.isRestricted(meta.metadata) then
+                        return nil, RESTRICTED_MSG
                     end
                     local epub
                     for _, file in ipairs(meta.files) do

@@ -59,8 +59,9 @@
 
 ## 2. Pending / unverified ⏳ (do next)
 
-- [ ] **Verify OpenShelf v0.4.1 on-device** — deployed 2026-10-26 (SSH); needs a
-      KOReader restart to load. Check: About shows 0.4.1, cover-view footer
+- [ ] **Verify OpenShelf v0.4.2 on-device** — 0.4.1 verified 2026-10-26 (About, covers,
+      Gutenberg download, folder); 0.4.2 adds the IA fix. Re-check: an Internet
+      Archive download succeeds (no 401), cover-view footer
       when DOAB errors (tap → details), covers not squashed, "already
       downloaded → Open / Download again" prompt, book lands in
       `/mnt/onboard/OpenShelf/` and shows in the stock library after leaving KOReader.
@@ -153,6 +154,7 @@ footer in the cover view too, aspect-correct covers, real HTTP total timeouts
 Internet Archive query sanitizing, offline unit test + luacheck + GitHub CI.
 0.4.1: `version.lua` → `openshelf_version.lua` (name clash, §6), `_meta.lua`
 drops the deprecated `name` field, unit test guards module names.
+0.4.2: Internet Archive excludes borrow-only items (401 on download, §6).
 
 **In progress (v0.5, started 2026-10-26): UI redesign per `DESIGN.md`** — home
 screen (search, recents, My books, browse shelves), results list/grid with a
@@ -273,6 +275,11 @@ diskutil eject /Volumes/KOBOeReader
 - **Replaced widget subtrees are never freed** — `UIManager:close` only sends
   `CloseWidget` to the tree that is current at close time. Call `old:free()`
   before swapping `self[1]` (see `CoverBrowser:_render`).
+- **Internet Archive lists lending-library books as `format:EPUB`** — most hits
+  for a popular title are `access-restricted-item:true` (collections `inlibrary` /
+  `printdisabled`); the EPUB URL answers **401** without an archive.org login
+  (seen on-device 2026-10-26, v0.4.1). Since v0.4.2 the query adds
+  `AND NOT access-restricted-item:true` and `resolve()` refuses flagged items.
 - **Lucene specials in user text break Internet Archive search** — a `:` or `(`
   makes advancedsearch return an error (seen as zero results). Strip them and
   lowercase (`AND`/`OR`/`NOT` are operators) — `InternetArchive.sanitizeQuery`.
