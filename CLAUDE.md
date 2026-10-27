@@ -104,3 +104,20 @@ device (Exit → Restart KOReader). USB fallback per `TODO_CLARA_HD.md` §5 — 
 `scripts/deploy-launcher.sh` installs the Kobo launcher (`kobo/`: KFMon watch +
 script + icon, listed by NickelMenu's kfmon generator); KFMon only reads it
 after a reboot.
+
+## Agent skills
+
+### Issue tracker
+
+GitHub Issues in jdsoliveiraa/openshelf via the `gh` CLI; tickets use native
+blocking edges. See `docs/agents/issue-tracker.md`.
+
+### Triage labels
+
+Default vocabulary: `needs-triage`, `needs-info`, `ready-for-agent`,
+`ready-for-human`, `wontfix`. See `docs/agents/triage-labels.md`.
+
+### Domain docs
+
+Single-context: `GLOSSARY.md` and `docs/adr/` at the repo root, created lazily
+by `/domain-modeling`. See `docs/agents/domain.md`.
