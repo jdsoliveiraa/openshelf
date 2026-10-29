@@ -44,7 +44,7 @@ function MyBooksView:titleBarSpec()
     return {
         title = _("My books"),
         left_icon = "chevron.left",
-        on_left = function() UIManager:close(self) end,
+        on_left = function() self:close() end,
     }
 end
 

@@ -48,7 +48,7 @@ function ListView:titleBarSpec()
     return {
         title = self.title,
         left_icon = "chevron.left",
-        on_left = function() UIManager:close(self) end,
+        on_left = function() self:close() end,
     }
 end
 

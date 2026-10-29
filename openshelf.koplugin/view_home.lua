@@ -81,7 +81,7 @@ function HomeView:onTitleTap()
 end
 
 function HomeView:onBack()
-    if self.mode == "results" then self:goHome() else UIManager:close(self) end
+    if self.mode == "results" then self:goHome() else self:close() end
 end
 
 function HomeView:onExit()

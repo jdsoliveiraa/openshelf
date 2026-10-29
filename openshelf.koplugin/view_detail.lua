@@ -52,7 +52,7 @@ function DetailView:titleBarSpec()
     return {
         title = self.entry.title or "",
         left_icon = "chevron.left",
-        on_left = function() UIManager:close(self) end,
+        on_left = function() self:close() end,
     }
 end
 
@@ -196,7 +196,7 @@ function DetailView:actionRow(st)
             local dw = w - pad - x
             items[#items + 1] = P.hspace(pad)
             items[#items + 1] = P.button(_("Done"), dw, bh)
-            hits[#hits + 1] = { x = x, w = dw, on_tap = function() UIManager:close(self) end }
+            hits[#hits + 1] = { x = x, w = dw, on_tap = function() self:close() end }
         elseif e.alternates and #e.alternates > 0 then
             local chip_w = Screen:scaleBySize(64)
             local formats = { e.format }

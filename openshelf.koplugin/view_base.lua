@@ -18,6 +18,10 @@ Subclasses implement:
   onPageBuilt()    -- after a page is laid out (optional; e.g. prefetch covers)
   teardown()       -- on close (optional)
   onBack()         -- Back key / left arrow default; onExit() -- title-bar X
+
+A view closes itself with self:close(), never a bare UIManager:close(self).
+onCloseWidget enqueues the full-screen refresh KOReader drops (#25), so every
+path that closes a view, App.exitAll included, refreshes the panel.
 --]]
 local InputContainer = require("ui/widget/container/inputcontainer")
 local FrameContainer = require("ui/widget/container/framecontainer")
@@ -28,6 +32,7 @@ local UIManager = require("ui/uimanager")
 local Geom = require("ui/geometry")
 local Device = require("device")
 local Blitbuffer = require("ffi/blitbuffer")
+local CloseRefresh = require("openshelf_closerefresh")
 local Screen = Device.screen
 
 local ViewBase = InputContainer:extend{
@@ -225,19 +230,35 @@ function ViewBase:onClose()
     return true
 end
 
+-- The one way a view closes itself (left arrow, Back key, Done, X).
+function ViewBase:close()
+    UIManager:close(self)
+end
+
 -- Left arrow / Back key: default closes this view only.
 function ViewBase:onBack()
-    UIManager:close(self)
+    self:close()
 end
 
 -- Title-bar X: default closes this view only (home overrides to leave the app).
 function ViewBase:onExit()
-    UIManager:close(self)
+    self:close()
 end
 
 function ViewBase:onCloseWidget()
     if self.teardown then self:teardown() end
     if self[1] and self[1].free then self[1]:free() end
+    -- UIManager:close repaints what's below but drops a nil refresh (#25), so
+    -- ask for one over the whole screen, as Menu:onCloseWidget does; none
+    -- while handing off to a book or while the FM/reader tears down.
+    local FileManager = require("apps/filemanager/filemanager")
+    local ReaderUI = require("apps/reader/readerui")
+    local mode = CloseRefresh.mode(FileManager.instance, ReaderUI.instance)
+    if mode then
+        UIManager:setDirty(nil, function()
+            return mode, Geom:new{ x = 0, y = 0, w = Screen:getWidth(), h = Screen:getHeight() }
+        end)
+    end
 end
 
 return ViewBase

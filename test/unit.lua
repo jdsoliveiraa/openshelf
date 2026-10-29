@@ -1352,6 +1352,31 @@ check(ok_ex == false and table.concat(ex_fails or {}, " "):find("offline stub", 
       "example drop-in reaches ctx.http (offline stub answers)", table.concat(ex_fails or {}, " | "))
 end)()
 
+---------------------------------------------------------------------------
+-- Closing a view refreshes the panel (#25): KOReader drops the refresh of a
+-- bare UIManager:close, so every OpenShelf view asks for a full-screen "ui"
+-- refresh itself, except when OpenShelf is leaving to open a book (the
+-- reader does its own full refresh) or the host UI is tearing down.
+---------------------------------------------------------------------------
+do
+local CloseRefresh = require("openshelf_closerefresh")
+local fm, reader, gone = {}, {}, { tearing_down = true }
+eq(CloseRefresh.mode(fm, nil), "ui", "closing a view over the file manager -> ui refresh")
+eq(CloseRefresh.mode(nil, reader), "ui", "closing a view over the reader -> ui refresh")
+eq(CloseRefresh.mode(gone, nil), nil, "file manager tearing down -> no refresh")
+eq(CloseRefresh.mode(nil, gone), nil, "reader tearing down -> no refresh")
+eq(CloseRefresh.mode(gone, reader), "ui", "one live host is enough")
+eq(CloseRefresh.mode(nil, nil), nil, "no file manager or reader -> no refresh")
+local seen
+CloseRefresh.leavingForBook(function() seen = CloseRefresh.mode(fm, nil) end)
+eq(seen, nil, "closing while leaving to open a book -> no refresh")
+eq(CloseRefresh.mode(fm, nil), "ui", "back to refreshing once the book hand-off is done")
+local ok = pcall(CloseRefresh.leavingForBook, function() error("boom") end)
+check(not ok, "leavingForBook propagates errors")
+eq(CloseRefresh.mode(fm, nil), "ui", "a failed hand-off does not leave refreshes suppressed")
+end
+
+
 print("== module names vs KOReader's own ==")
 -- Plugins share one flat require() namespace with KOReader. Anything KOReader
 -- loaded before plugins is cached in package.loaded, so a sibling with the same

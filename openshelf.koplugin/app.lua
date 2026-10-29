@@ -6,6 +6,7 @@ and the "open this file in the reader" helper.
 local DataStorage = require("datastorage")
 local UIManager = require("ui/uimanager")
 local lfs = require("libs/libkoreader-lfs")
+local CloseRefresh = require("openshelf_closerefresh")
 local Collection = require("collection")
 local Covers = require("covers")
 local Downloader = require("downloader")
@@ -182,7 +183,8 @@ end
 
 --- Leave OpenShelf and open the file in the reader.
 function App.openBook(path)
-    App.exitAll()
+    -- the reader does its own full refresh: closing the views mustn't add one
+    CloseRefresh.leavingForBook(App.exitAll)
     UIManager:nextTick(function()
         local ReaderUI = require("apps/reader/readerui")
         ReaderUI:showReader(path)
