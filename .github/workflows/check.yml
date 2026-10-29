@@ -23,7 +23,7 @@ jobs:
 
       - name: Load-check every file with LuaJIT (device semantics)
         run: |
-          for f in openshelf.koplugin/*.lua openshelf.koplugin/*/*.lua test/*.lua tools/*.lua; do
+          for f in openshelf.koplugin/*.lua openshelf.koplugin/*/*.lua provider-openshelf-template.koplugin/*.lua examples/*.lua test/*.lua tools/*.lua; do
             [ -f "$f" ] || continue
             luajit -e "assert(loadfile('$f'))" || exit 1
           done

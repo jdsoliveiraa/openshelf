@@ -26,7 +26,7 @@ package.preload["json"] = function()
     -- Small real decoder so recorded JSON fixtures load offline (objects,
     -- arrays, strings with escapes, numbers, true/false/null). `null` decodes
     -- to a function, like KOReader's LuaJSON, so the null guards see the
-    -- real thing. encode stays a dummy.
+    -- real thing.
     local NULL = function() end
     local ESC = { ['"'] = '"', ["\\"] = "\\", ["/"] = "/", b = "\b", f = "\f", n = "\n", r = "\r", t = "\t" }
     local function skip(s, i) return s:find("%S", i) or #s + 1 end
@@ -97,7 +97,29 @@ package.preload["json"] = function()
         assert(num and num ~= "", "bad JSON at " .. i)
         return tonumber(num), i + #num
     end
-    return { decode = function(s) return (decode(s, 1)) end, encode = function() return "{}" end, null = NULL }
+    -- Minimal real encoder (strings, numbers, booleans, plain tables) so the
+    -- provider check's JSON round trip runs offline. Raises on anything else.
+    local function quote(v)
+        return '"' .. v:gsub('[%c"\\]', function(ch)
+            return ch == '"' and '\\"' or ch == "\\" and "\\\\" or string.format("\\u%04x", ch:byte())
+        end) .. '"'
+    end
+    local encode
+    encode = function(v)
+        local t = type(v)
+        if t == "string" then return quote(v) end
+        if t == "number" or t == "boolean" then return tostring(v) end
+        if t ~= "table" then error("cannot encode a " .. t) end
+        if #v > 0 or next(v) == nil then
+            local out = {}
+            for i = 1, #v do out[i] = encode(v[i]) end
+            return "[" .. table.concat(out, ",") .. "]"
+        end
+        local out = {}
+        for k, x in pairs(v) do out[#out + 1] = quote(tostring(k)) .. ":" .. encode(x) end
+        return "{" .. table.concat(out, ",") .. "}"
+    end
+    return { decode = function(s) return (decode(s, 1)) end, encode = encode, null = NULL }
 end
 
 local Entry = require("entry")
@@ -1221,6 +1243,114 @@ check(ext_why:find("notable.lua: not a table", 1, true) ~= nil, "a file not retu
 eq(#reasons_since(inv0), 7, "every broken provider is listed once")
 local s3 = External.new{ catalog = Catalog, listDir = function() error("no such dir") end, loadFile = bad.loadFile }
 check(pcall(s3.scan, s3, nil, "/missing"), "a missing folder and no registry are tolerated")
+
+;(function() -- provider_check: own function, the main chunk is at the 200-local limit
+print("== provider_check: arguments (PROVIDERS.md 10) ==")
+local Check = dofile(this .. "../tools/provider_check.lua")
+local args = Check.parseArgs({ "p.lua", "emma", "--set", "token=abc", "--set", "q=a=b", "--download", "--limit", "5" })
+eq(args and args.file, "p.lua", "first positional is the provider file")
+eq(args and args.query, "emma", "second positional is the query")
+eq(args and args.settings.token, "abc", "--set key=value fills settings")
+eq(args and args.settings.q, "a=b", "--set splits on the first = only")
+eq(args and args.download, true, "--download is opt-in")
+eq(args and args.limit, 5, "--limit sets the page size")
+local defaults = Check.parseArgs({ "p.lua" })
+eq(defaults and defaults.query, "pride and prejudice", "default query")
+eq(defaults and defaults.download, false, "no download by default")
+eq(defaults and defaults.offline, false, "network checks on by default")
+eq(Check.parseArgs({ "p.lua", "--offline" }).offline, true, "--offline skips the tool's own network checks")
+check(Check.parseArgs({}) == nil, "a provider file is required")
+check(Check.parseArgs({ "p.lua", "--bogus" }) == nil, "unknown flags are refused")
+check(Check.parseArgs({ "p.lua", "--set", "novalue" }) == nil, "--set needs key=value")
+
+print("== provider_check: contract run (offline) ==")
+local function good(over)
+    local p = {
+        api = 1, id = "checkme", name = "Check Me",
+        search = function(q, _limit, _page, ctx)
+            return { ctx.Entry.new{ title = "Book about " .. q, author = "A. Author",
+                                    locator = { url = "https://example.org/a.epub", n = 1 } } }, false
+        end,
+        resolve = function(loc) return { url = loc.url, headers = { Authorization = "Bearer x" } } end,
+    }
+    for k, val in pairs(over or {}) do p[k] = val end
+    return p
+end
+local function run_check(p, extra)
+    local opts = { provider = p, query = "cats", offline = true, out = function() end }
+    for k, val in pairs(extra or {}) do opts[k] = val end
+    return Check.run(opts)
+end
+local function failed_with(p, needle, label, extra)
+    local ok, problems = run_check(p, extra)
+    local text = table.concat(problems or {}, " | ")
+    check(ok == false and text:find(needle, 1, true) ~= nil, label, text)
+end
+local ok_run, fails = run_check(good())
+check(ok_run == true and #fails == 0, "a well-formed provider passes", table.concat(fails or {}, " | "))
+failed_with("nope", "not a table", "a non-table is refused")
+failed_with(good{ api = 2 }, "api must be 1", "wrong api is refused")
+failed_with(good{ resolve = false }, "missing resolve", "missing resolve is refused")
+failed_with(good{ search = function() error("kaboom") end }, "kaboom", "a raising search fails with its message")
+failed_with(good{ search = function() return nil, "service down" end }, "service down", "search nil, err fails with err")
+failed_with(good{ search = function() return {}, false end }, "no results", "zero rows cannot be checked further")
+failed_with(good{ search = function(_q, _l, _p, ctx) return { ctx.Entry.new{ title = "x", locator = { url = "u" } } }, "yes" end },
+    "has_more", "has_more must be a boolean")
+failed_with(good{ search = function() return { { title = "x", locator = { url = "u" }, fn = print } }, false end },
+    "function", "a function inside a row fails the plain-data check")
+failed_with(good{ search = function() return { { title = "x" } }, false end },
+    "locator", "a row without a locator fails")
+failed_with(good{ search = function() return { { title = "x", locator = { url = { "nested" } } } }, false end },
+    "locator", "a locator with a nested table fails")
+failed_with(good{ search = function(_q, l, _p, ctx)
+        local many = {}
+        for i = 1, l + 1 do many[i] = ctx.Entry.new{ title = "t" .. i, locator = { id = i } } end
+        return many, true
+    end }, "limit", "more rows than the limit fails", { limit = 3 })
+failed_with(good{ resolve = function() return nil, "gone from the shelf" end }, "gone from the shelf",
+    "resolve nil, err fails with err")
+failed_with(good{ resolve = function() return { headers = {} } end }, "no URL", "resolve without url fails")
+
+local seen_settings
+local needs = good{
+    settings = { { key = "token", title = "Token", type = "secret", required = true },
+                 { key = "lang", title = "Language", type = "choice", choices = { "any", "en" }, default = "any" } },
+    search = function(_q, _l, _p, ctx)
+        seen_settings = ctx.settings
+        return { ctx.Entry.new{ title = "x", locator = { url = "u" } } }, false
+    end,
+}
+failed_with(needs, "needs setup: token", "a required setting left out fails before searching")
+local ok_set = run_check(needs, { settings = { token = "abc" } })
+check(ok_set == true, "--set satisfies a required setting")
+eq(seen_settings and seen_settings.token, "abc", "ctx.settings carries --set values")
+eq(seen_settings and seen_settings.lang, "any", "ctx.settings applies declared defaults")
+run_check(needs, { settings = { token = "abc", lang = "en" } })
+eq(seen_settings and seen_settings.lang, "en", "--set overrides a default")
+
+failed_with(good{ shelves = { { key = "top", title = "Top" } },
+                  browse = function() return nil, "shelf broke" end }, "shelf broke", "a failing shelf browse fails")
+failed_with(good{ check = function() return false, "bad token" end }, "bad token", "a failing check() fails")
+
+local ok_buy = run_check(good{ search = function(_q, _l, _p, ctx)
+    return { ctx.Entry.new{ action = "buy", title = "x", locator = { url = "https://shop/x" } },
+             ctx.Entry.new{ title = "y", locator = { url = "https://free/y" } } }, false
+end, resolve = function(loc) assert(loc.url ~= "https://shop/x", "buy row resolved"); return loc.url end })
+check(ok_buy == true, "buy rows are never resolved; the first download row is")
+
+print("== provider_check: shipped template + example ==")
+local TEMPLATE = this .. "../provider-openshelf-template.koplugin/openshelf_template.lua"
+local ok_tpl, tpl_fails = Check.run{ file = TEMPLATE, query = "pride", offline = true, out = function() end }
+check(ok_tpl == true, "template provider passes the offline check", table.concat(tpl_fails or {}, " | "))
+local ok_pt = Check.run{ file = TEMPLATE, query = "pride", settings = { lang = "pt" }, offline = true, out = function() end }
+check(ok_pt == false, "template honours ctx.settings.lang (no Portuguese Pride and Prejudice)")
+local example = dofile(this .. "../examples/gutenberg_pt.lua")
+check(Catalog.validate(example), "example drop-in is a valid provider", select(2, Catalog.validate(example)))
+local ok_ex, ex_fails = Check.run{ file = this .. "../examples/gutenberg_pt.lua", query = "machado",
+    offline = true, out = function() end }
+check(ok_ex == false and table.concat(ex_fails or {}, " "):find("offline stub", 1, true) ~= nil,
+      "example drop-in reaches ctx.http (offline stub answers)", table.concat(ex_fails or {}, " | "))
+end)()
 
 print("== module names vs KOReader's own ==")
 -- Plugins share one flat require() namespace with KOReader. Anything KOReader

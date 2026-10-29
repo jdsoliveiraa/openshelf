@@ -14,7 +14,9 @@ read §6–7 before changing network, UI, or source-related behaviour.
 luacheck .                                   # lint (std = luajit)
 luajit test/unit.lua                         # offline unit test, no network
 eval "$(luarocks --lua-version=5.1 path)"; luajit test/headless_providers.lua "pride and prejudice"   # live APIs
-for f in openshelf.koplugin/*.lua test/*.lua; do luajit -e "assert(loadfile('$f'))"; done
+luajit tools/provider_check.lua <provider.lua> ["query"] [--set k=v] [--download] [--offline]   # one provider (PROVIDERS.md §10)
+scripts/emu.sh --template --walk tools/emu-external-check.lua --shots /tmp/shots   # external providers: template plugin + example drop-in
+for f in openshelf.koplugin/*.lua openshelf.koplugin/*/*.lua provider-openshelf-template.koplugin/*.lua examples/*.lua test/*.lua tools/*.lua; do luajit -e "assert(loadfile('$f'))"; done
 scripts/emu.sh                               # emulator, opens straight into OpenShelf
 scripts/emu.sh --walk tools/emu-walkthrough.lua --shots /tmp/shots   # scripted walkthrough + PNGs
 scripts/emu.sh --no-autoopen --walk tools/emu-walkthrough-3.lua --shots /tmp/shots   # home mode (needs OPENSHELF_TEST_EPUB)

@@ -278,14 +278,17 @@ a provider file is the same in each.
 ### 8.1 In-tree (pull request)
 Put `openshelf.koplugin/providers/<id>.lua` next to the built-ins and add it
 to the ordered list in `openshelf.koplugin/openshelf_providers.lua`. Keep a
-pure `parse(data, ctx)` and cover it in `test/unit.lua`; wire the live call
-into `tools/provider_check.lua`'s expectations if it has quirks (DOAB, for
-example, 403s from datacenter IPs).
+pure `parse(data, ctx)` and cover it in `test/unit.lua`, then add it to the
+`BUILTINS` list in `test/headless_providers.lua`, which runs
+`tools/provider_check.lua` live over every built-in. Mark known quirks there
+(DOAB, for example, 403s from datacenter IPs).
 
 ### 8.2 Your own KOReader plugin
 Folder name **`provider-openshelf-<id>.koplugin`**. KOReader loads folders
 whose name starts with `provider` before all other plugins and offers them in
-*Plugin management* like any plugin. Three files:
+*Plugin management* like any plugin. Three files. Start by copying
+`provider-openshelf-template.koplugin/` from the OpenShelf repo; it has all
+three:
 
 ```lua
 -- _meta.lua
@@ -378,15 +381,53 @@ luajit tools/provider_check.lua path/to/openshelf_examplebooks.lua "pride and pr
     --set token=abc123
 ```
 
-`provider_check` validates the table, calls `search` with the shims the
-headless test already uses, round-trips every entry through JSON, asserts that
-rows are plain data with a usable locator, `resolve`s the first row, HEADs the
-URL and reports the content type and size. Exit status is non-zero on any
-failure. It never downloads a full file unless you pass `--download`.
+```
+luajit tools/provider_check.lua <provider.lua> ["query"] [flags]
+  --set key=value   a value for one of your settings fields (repeatable)
+  --limit N         page size passed to search (default 10)
+  --download        also download the resolved file and check it is an EPUB or PDF
+  --offline         skip the tool's own network steps (HEAD, cover, download)
+```
+
+The query defaults to `"pride and prejudice"`; pick one your catalog has hits
+for. `provider_check` runs, in order:
+
+1. **load + validate** — `dofile`s the file and applies the §2 rules
+   (including the §7 field schema).
+2. **settings** — `--set` values go through the host's own rules: undeclared
+   keys are ignored with a warning, defaults apply, empty text is `nil`,
+   toggles take `true`/`false`. A `required` field left out fails here.
+3. **check** — your `check(ctx)`, when you define one.
+4. **search** — `search(query, limit, 1, ctx)` with the shims the headless
+   test uses. Fails on an error, no rows, more rows than `limit`, or a
+   non-boolean `has_more`.
+5. **rows** — every row must be plain data (no functions, no cycles), have a
+   locator of strings and numbers with a usable identity (§4.2), a known
+   `action`, and keep that identity through a JSON round trip.
+6. **shelves** — `browse(key, 12, ctx)` for every shelf, same row checks.
+7. **resolve** — the first row that is not a buy row, from its *round-tripped*
+   locator (as a fresh process would), through the host's normalization.
+8. **head** — HEADs the URL with the resolved headers; reports content type and
+   size.
+9. **cover** — the first row's cover must load **without headers** and be a
+   JPEG, PNG or GIF.
+10. **download** — only with `--download`: the whole file, checked for EPUB
+    (zip) or PDF magic, then deleted.
+
+Exit status: `0` on pass, `1` on any failure, `2` on a usage error.
+`--offline` stops after step 7. Your own `ctx.http` calls still go out, so
+`--offline` is for checking a stub or a recorded-payload provider.
+
+The repo ships two starting points that pass the tool:
+`provider-openshelf-template.koplugin/` (the §8.2 plugin folder with a stub
+provider that searches a built-in list, so it works offline) and
+`examples/gutenberg_pt.lua` (a §8.3 drop-in against a live API).
 
 On the emulator (`scripts/emu.sh`), a drop-in file in `.kohome/settings/…`
-or a plugin folder in `.kohome/plugins/` is picked up like on the device;
-`tools/emu-walkthrough*.lua` can drive a search and screenshot the result.
+or a plugin folder in `.kohome/plugins/` is picked up like on the device.
+`scripts/emu.sh --template` links the template plugin.
+`tools/emu-external-check.lua` drives the external path (template, example,
+and a broken drop-in) and takes screenshots.
 
 Unit-test your `parse` with recorded payloads, the way the built-ins do.
 

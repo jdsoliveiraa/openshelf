@@ -1,9 +1,12 @@
--- External providers check (#8) for the KOReader emulator. Expects, in KO_HOME:
---   plugins/provider-openshelf-devplug.koplugin   (registers "devplug" via the core registry)
---   settings/openshelf/providers/*.lua            (a valid "devdrop" + broken variants)
--- Logs ids/invalid after the first open, drops a new file, reopens OpenShelf
--- (it must appear), searches with built-ins disabled, shows Sources.
--- Run via scripts/emu.sh --walk tools/emu-external-check.lua --shots <dir>. Dev only.
+-- External providers check (#8, #9) for the KOReader emulator, using the
+-- committed dev kit instead of local fixtures:
+--   provider-openshelf-template.koplugin  linked by `scripts/emu.sh --template`
+--   examples/gutenberg_pt.lua             copied into the drop-in folder below
+-- Logs ids/invalid after the first open (the template plugin must be there),
+-- drops the example plus a broken file, reopens OpenShelf (both must appear,
+-- the broken one dimmed with its reason), searches with the built-ins
+-- disabled, shows Sources, then removes the drop-ins and restores settings.
+-- Run: scripts/emu.sh --template --walk tools/emu-external-check.lua --shots <dir>. Dev only.
 local Event = require("ui/event")
 local UIManager = require("ui/uimanager")
 local Screen = require("device").screen
@@ -13,6 +16,8 @@ local Catalog = require("catalog")
 local Settings = require("settings")
 local OUT = os.getenv("OPENSHELF_SHOT_DIR")
 local DIR = DataStorage:getSettingsDir() .. "/openshelf/providers"
+local REPO = (debug.getinfo(1, "S").source:match("^@(.*/)tools/") or "./")
+local EXAMPLE = REPO .. "examples/gutenberg_pt.lua"
 local step = 0
 local function log(...) print("DEVSCRIPT", os.date("%H:%M:%S"), ...) end
 local function shot(name)
@@ -38,31 +43,41 @@ local function state(label)
     log(label, "IDS", table.concat(Catalog.ids(), ","))
     for __, inv in ipairs(Catalog.invalid()) do log(label, "INVALID", inv.name, inv.reason) end
 end
+local function copy(from, to)
+    local src = assert(io.open(from, "rb"))
+    local body = src:read("*a")
+    src:close()
+    local dst = assert(io.open(to, "wb"))
+    dst:write(body)
+    dst:close()
+end
 local BUILTINS = { "gutendex", "internetarchive", "doab" }
 
 at(1, function()
     state("first-open")
+    log("template registered", Catalog.byId("template") ~= nil)
     local f = io.open(DIR .. "/README.txt")
     log("README present", f ~= nil)
     if f then f:close() end
     shot("home")
 end, "first open")
 at(1, function()
-    local f = assert(io.open(DIR .. "/devlate.lua", "w"))
-    f:write([[return { api = 1, id = "devlate", name = "Dev Late Drop-in",
-        search = function(q, l, p, ctx) return { ctx.Entry.new{ title = "Late book for " .. q,
-            author = "L. Ate", format = "epub", locator = { url = "http://example.invalid/late" } } }, false end,
-        resolve = function(loc) return loc.url end }]])
+    copy(EXAMPLE, DIR .. "/gutenberg_pt.lua")
+    local f = assert(io.open(DIR .. "/broken_api.lua", "w"))
+    f:write([[return { api = 2, id = "brokenapi", name = "Broken API",
+        search = function() return {}, false end, resolve = function() end }]])
     f:close()
     App.exitAll()
-end, "drop a new file, close OpenShelf")
+end, "drop the example + a broken file, close OpenShelf")
 at(2, function() UIManager:broadcastEvent(Event:new("OpenShelfOpen")) end, "reopen")
 at(3, function()
     state("reopen")
+    log("example registered", Catalog.byId("gutenberg_pt") ~= nil)
     for __, id in ipairs(BUILTINS) do Settings.setEnabled(Catalog.byId(id), false) end
-    App.homeView():startSearch("test")
+    Settings.setEnabled(Catalog.byId("gutenberg_pt"), true)   -- enabled_by_default = false
+    App.homeView():startSearch("machado")
 end, "search externals only")
-at(4, function()
+at(8, function()
     local h = App.homeView()
     for i, e in ipairs(h.entries or {}) do log(("ROW %02d | %s | %s | %s"):format(i, e.title, e.source, tostring(e.provider))) end
     shot("results")
@@ -72,7 +87,9 @@ at(2, function() App.homeView():openSettings() end, "settings")
 at(2, function() shot("sources") end, "sources")
 at(1, function()
     for __, id in ipairs(BUILTINS) do Settings.setEnabled(Catalog.byId(id), true) end
-    os.remove(DIR .. "/devlate.lua")
+    Settings.setEnabled(Catalog.byId("gutenberg_pt"), false)
+    os.remove(DIR .. "/gutenberg_pt.lua")
+    os.remove(DIR .. "/broken_api.lua")
     log("done"); os.exit(0)
 end, "exit")
 run(1)
