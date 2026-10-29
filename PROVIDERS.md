@@ -106,7 +106,7 @@ return P
 | `enabled_by_default` | boolean | no | Default `true`. Set `false` for sources that need setup first; the user turns them on in Sources. |
 | `shelves` | list | no | `{ { key = "popular", title = "Popular on …" }, … }`. `key` follows the `id` pattern. Requires `browse`. |
 | `settings` | list | no | Field schema rendered in the source's submenu (§7). |
-| `root` | string | no (api 2) | Title of your top-level folder, at most 60 bytes, e.g. `"Course materials"`. Shown as a chip in the home *Browse* section; tapping it calls `list(nil, …)`. Requires `list`. |
+| `root` | string | no (api 2) | Title of your top-level folder, non-empty, at most 60 bytes, e.g. `"Course materials"`. Shown as a chip in the home *Browse* section; tapping it calls `list(nil, …)`. Requires `list`. |
 | `dedupe` | boolean | no (api 2) | Default `true`. `false` keeps every one of your rows out of dedupe, so two same-titled files never merge (course files called "Aula 1" in two repositories). |
 | `search` | function | yes | §5.1 |
 | `resolve` | function | yes | §5.2 |
@@ -241,10 +241,12 @@ ctx.Entry.folder{
   deduped or recorded in My books. Mixed with files, they group first under
   a "Folders" header, and they pass any format filter.
 - **`path`** lists titles, outermost first, without the root and without
-  the row itself; `{}` means "directly under your root". On a folder row it
-  says where the folder sits: outside folder views (search, shelves, scoped
-  search) it becomes the second line when there is no `subtitle`, and the
-  folder's files are saved under it. On a file row it places the file at
+  the row itself; `{}` means "directly under your root". Numbers become
+  strings (a year folder `2025`); any other element, or one that cleans to
+  nothing, becomes `_` so the depth is kept. On a folder row it says where
+  the folder sits: the folder's files are saved under `<path…>/<title>/`
+  wherever the row appears, and outside folder views (search, shelves,
+  scoped search) it is also the second line when there is no `subtitle`. On a file row it places the file at
   `OpenShelf/<your name>/<path…>/<Title>.<ext>`. Fill it whenever you know
   it, so a file lands in the same place wherever it was found. Without it,
   a file that `list` returned goes to that folder's directory, and one found
@@ -451,7 +453,7 @@ restart KOReader after editing.
 ### 8.5 Invalid providers
 A table that fails validation — wrong `api`, bad `id`, missing `search` or
 `resolve`, `shelves` without `browse`, and for api 2: no `list`, a `root`
-that is not a string of at most 60 bytes, a `search_in` that is not a
+that is not a non-empty string of at most 60 bytes, a `search_in` that is not a
 function, a `dedupe` that is not a boolean; a load error in the file — is
 **listed dimmed in Sources with the reason** and logged. It never blocks
 the others and never shows a modal.
@@ -471,7 +473,10 @@ the others and never shows a modal.
   before dedupe so "only Example Books" shows your edition even when a
   higher-quality one exists elsewhere.
 - Downloads go to `/mnt/onboard/OpenShelf/<Author> - <Title>.<format>` and
-  are recorded in My books with your `id`, `name` and the locator. Files
+  are recorded in My books with your `id`, `name` and the locator. From
+  v0.8.0, for every provider, a name another My books record already owns
+  gets ` (2)`, ` (3)`…, and a file with no record at the name is taken to
+  be this one and replaced on download. Files
   from folders (api 2) mirror the folders instead:
   `OpenShelf/<name>/<folders…>/<Title>.<format>`. A file already in My books
   always goes back to its recorded path. Otherwise, first match wins: the
@@ -480,9 +485,7 @@ the others and never shows a modal.
   plus its title; without `path`, the directory of the folder that listed
   it plus its title (your root's directory is `OpenShelf/<name>/`; your root
   title is never part of it); a folder found by search or a shelf without
-  `path` gets `OpenShelf/<name>/<title>/`. A name another My books record
-  already owns gets ` (2)`, ` (3)`…; a file with no record at the name is
-  taken to be this one and replaced on download.
+  `path` gets `OpenShelf/<name>/<title>/`.
 - Covers are fetched by URL in a background job and cached on disk. They must
   be reachable **without headers** in api 1 and 2.
 - **Folders (api 2)**: a `root` becomes a chip in the home *Browse* section.
@@ -546,8 +549,9 @@ of the folder locator; page 2 when page 1 says `has_more` (fails if it
 repeats a row); `search_in` once on that folder with the query and
 `--limit`, when you define it. Folder rows are skipped by resolve, head and
 cover; when search returned only folders, resolve uses the first file found
-inside one, and is skipped with a warning when none was found. An api-1
-provider that returns folder rows fails step 5.
+inside one, and is skipped with a warning when none was found. With no
+root and no folder row in search or shelves, the step warns *nothing to
+list* and passes. An api-1 provider that returns folder rows fails step 5.
 
 Exit status: `0` on pass, `1` on any failure, `2` on a usage error.
 `--offline` stops after step 7. Your own `ctx.http` calls still go out, so

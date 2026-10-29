@@ -44,7 +44,7 @@ Title bar: **gear (left) · "OpenShelf" · X (right)**. Body, top to bottom:
    "See all" → the My books screen (§2.5). Hidden when empty.
 4. **Browse shelves** — "Popular on Gutenberg" and "New on Gutenberg" (Gutendex
    default popularity sort, and newest-first). Same shelf layout. Data + covers
-   come from a **disk cache with a 24 h TTL**: render instantly from cache; if
+   come from a **disk cache with a 24 h TTL** (data kept; 24 h is the refresh age, §12.6): render instantly from cache; if
    stale and online, refresh in a background subprocess and repaint. Offline with
    no cache → shelf hidden. Only Gutenberg for now (Internet Archive's popular
    texts are noisy; DOAB has no useful browse).
@@ -172,11 +172,11 @@ On first successful download, OpenShelf:
    in the stock file manager's Collections.
 
 Downloaded state in results = a library record with the same source + locator,
-and the file present on disk.
+and the file present on disk. (From v0.8.0: a file at the entry's target, §12.8.)
 
 ### 3.6 Browse cache
 Gutendex popular + newest responses are cached on disk with a 24 h TTL alongside
-their covers. Refresh runs in a subprocess when stale and online.
+their covers (data kept; 24 h is the refresh age, §12.6). Refresh runs in a subprocess when stale and online.
 
 ## 4. Verification and release
 - **Single release** (v0.5). No on-device checkpoint until the whole flow works
@@ -225,7 +225,7 @@ their covers. Refresh runs in a subprocess when stale and online.
 | 28 | Single release |
 | 29 | My books shelves by reading status from KOReader sidecars |
 | 30 | Verify on the KOReader emulator first |
-| 31 | Browse data: disk cache, 24 h TTL, background refresh |
+| 31 | Browse data: disk cache, 24 h TTL, background refresh (data kept; 24 h = refresh age, §12.6) |
 | 32 | Hold-to-download progress drawn on the row/cell |
 | 33 | Download queue, one at a time |
 | 34 | List default; ✓ = exact edition; no landscape design; title-bar icon layout |
@@ -607,12 +607,19 @@ cached, not added to recent searches, needs Wi-Fi.
   Every segment is made safe like a file name; a segment that ends up empty
   (`.`, `..`) becomes `_`. Directories are created recursively. The host
   stamps the resolved directory on the rows it shows (folder rows included),
-  so detail, hold and Download all agree.
-- **Names**: `<Title>.<ext>` inside folder directories (a title that already
-  ends in `.<ext>`, any case, is not extended again: "Aula 1.pdf" stays
-  `Aula 1.pdf`); flat downloads keep `<Author> - <Title>.<ext>`. An entry's
+  so detail, hold and Download all agree. Caches (folders, shelves) store
+  rows unstamped: a folder without `path` has a directory that depends on
+  the route, and its cache key is only its locator.
+- **Names**: `<Title>.<ext>` inside folder directories; flat downloads keep
+  `<Author> - <Title>.<ext>`. In both, a title that already ends in `.<ext>`
+  (any case) is not extended again ("Aula 1.pdf" stays `Aula 1.pdf`), and a
+  base name that ends up empty becomes `_`, like a segment. An entry's
   **target** is its recorded path when it has a record; otherwise the first
-  of `Name`, `Name (2)`, `Name (3)`… that no other entry's record owns. ✓ =
+  of `Name`, `Name (2)`, `Name (3)`… that no other entry's record owns, the
+  suffix going before `.<ext>` after the 120-byte cut (`Aula 1 (2).pdf`).
+  Paths are compared case-insensitively (the Kobo's storage is vfat). The
+  target is worked out when the download starts, not when it is queued, so
+  two same-named files queued together get `Name` and `Name (2)`. ✓ =
   a file exists at the target, and a download writes the target, replacing
   whatever is there. A file OpenShelf has no record of thus counts as this
   entry's own copy when it sits at the entry's target (✓, *Open*, *Download
@@ -645,8 +652,9 @@ cached, not added to recent searches, needs Wi-Fi.
   trip on what comes back, page 2 when `has_more` (fails on a repeated row),
   `search_in` once when defined (search page size), and resolves the first
   file found inside when search returned none (skipped with a warning when
-  no file is found anywhere). An api-1 provider that returns folder rows
-  fails the row step.
+  no file is found anywhere). With no root and no folder row in search or
+  shelves, the step warns "nothing to list" and passes. An api-1 provider
+  that returns folder rows fails the row step.
 - Unit tests for the pure parts: folder rows and stamping, api-2 validation,
   dedupe / filter / group rules, directory and name building with the
   collision suffix, the folder cache (keys, eviction, settings clear).
@@ -671,7 +679,11 @@ from `ACTION_ORDER` vanish silently, so "folder" goes first in it, and
 shelves and My books; folder guards in `App.holdDownload`,
 `Downloader.enqueue` and `DetailView`; no `App.bookStatus` for folder rows;
 `Downloader.targetPath` gains the directory, the name rule and the suffix
-(recursive `util.makePath`). List, detail and My books set `on_left =
+(recursive `util.makePath`), and needs the entry's record and every
+record's path: today `start_next` writes `targetPath(entry)` even for a
+recorded entry, so *Download again* does not reuse the recorded path, and
+`App.bookStatus` falls back to `targetPath` when the recorded file is
+missing; both change under the target rule (§12.8). List, detail and My books set `on_left =
 close` directly, so overriding `onBack` alone does not change the chevron.
 An entry's `path` (a list of folder titles) is not the library record's
 `path` (the absolute file path, also in `App.bookStatus()`): `Library.add` /
@@ -692,7 +704,7 @@ An entry's `path` (a list of folder titles) is not the library record's
 | 77 | Only opened folders are cached, no prefetch; a provider's settings change clears its folders; cap 500 folders, least recently opened dropped. Shelves documented the same way (data kept, 24 h = refresh age) |
 | 78 | Scoped search: optional `search_in`; a search glyph in that provider's folder views and root; results in a stacked view with Load more; not cached, not in recents |
 | 79 | Disk mirrors the browse path, `OpenShelf/<provider name>/<ancestors…>/<folder>/`. A folder's directory is recursive: `path` + title, else (listed by `list`) its parent folder's directory + title, else `<provider name>/<title>`; the root is not a segment. A file without a record: its `path` → the directory of the folder that listed it → flat. A file with a record always uses its recorded path. The host stamps directories on shown rows |
-| 80 | Names: `<Title>.<ext>` inside folder directories (no doubled extension), `<Author> - <Title>.<ext>` flat. Target = the recorded path, else the first of `Name`, `Name (2)`… no other record owns; ✓ = a file at the target; a download replaces it. An unrecorded file at the target is this entry's copy |
+| 80 | Names: `<Title>.<ext>` inside folder directories (no doubled extension), `<Author> - <Title>.<ext>` flat. Target = the recorded path, else the first of `Name`, `Name (2)`… no other record owns (case-insensitive, worked out when the download starts); ✓ = a file at the target; a download replaces it. An unrecorded file at the target is this entry's copy |
 | 81 | Files from folders are recorded in My books like books (record + Collection), with their full path; folder rows are never recorded |
 | 82 | Download all: one folder, no recursion; footer button and hold on a folder row; fetches remaining pages, skips on-device files and buy rows, confirms with count (+ size), queues; *Cancel downloads* while queued |
 | 83 | Empty folder → "This folder is empty."; failure → cached rows + strip error, else message + Retry; `list` / `search_in` under the 60 s deadline |
