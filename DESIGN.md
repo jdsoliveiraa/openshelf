@@ -239,7 +239,7 @@ their covers. Refresh runs in a subprocess when stale and online.
 | 44 | User arranges source order with the stock SortWidget; one order drives result slots, home shelves and the filter dialog; new sources append |
 | 45 | 60 s deadline on search/browse/resolve/check jobs in subprocess mode; slot reads "timed out"; downloads exempt |
 | 46 | DRM-free is policy in `PROVIDERS.md`, not enforced in code |
-| 47 | Feature-whitelist workaround in the template plugin + upstream PR adding `openshelf` to KOReader's Provider features |
+| 47 | Provider plugins create the `openshelf` slot in KOReader's Provider registry themselves (one line in the template); no upstream KOReader change (upstream PR dropped 2026-10-29, #11) |
 | 48 | Invalid providers (shape, api, load error, duplicate id) show dimmed in Sources with the reason; the later registrant loses |
 | 49 | Borrow rows resolve and download like downloads (button "Borrow"); buy rows show URL + QR via QRMessage, never download; optional `price` |
 | 50 | Borrow/buy rows dedupe under any free download of the same work |
@@ -355,8 +355,8 @@ fields sorted.
    KOReader's core `Provider` singleton (`frontend/provider.lua`, in KOReader
    since Dec 2024, so present on the Clara's v2026.07.2). The registry's
    feature list is a hardcoded whitelist that only knows `exporter`; the
-   template adds the `openshelf` slot itself (one line) and we open a two-line
-   upstream PR. Plugin instances are created in *path order*, so `openshelf`
+   template adds the `openshelf` slot itself (one line). That line is the
+   permanent mechanism; no upstream KOReader change is planned. Plugin instances are created in *path order*, so `openshelf`
    inits before any `provider-*` plugin — OpenShelf therefore reads the
    registry **lazily when it opens**, never at `init()`.
 3. **Drop-in file** under `<settings>/openshelf/providers/`

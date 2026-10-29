@@ -13,8 +13,8 @@ local WidgetContainer = require("ui/widget/container/widgetcontainer")
 local Plugin = WidgetContainer:extend{ name = "provider-openshelf-template" }
 
 function Plugin:init()
-    -- KOReader's registry whitelists features; "openshelf" is not listed
-    -- upstream yet, so create the slot. Harmless once it is.
+    -- KOReader's registry only accepts features on its built-in list, and
+    -- "openshelf" is not on it, so create the slot first. Required.
     Provider.features.openshelf = Provider.features.openshelf or {}
     -- dofile, not require: one flat require namespace across KOReader and
     -- every plugin (PROVIDERS.md §8.2).
