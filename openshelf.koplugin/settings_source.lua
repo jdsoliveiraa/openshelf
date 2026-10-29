@@ -3,7 +3,8 @@ One source's submenu (PROVIDERS.md §7, DESIGN.md §9.5, decisions 51–52):
 
   Enabled · the provider's declared fields (text, secret, toggle, choice; a
   dim hint row under each that has one) · Test connection when the provider
-  defines check · [Shelves on home — ticket #6]
+  defines check · Shelves on home when the provider declares shelves
+  (default on; off hides its home shelves, never its search slot)
 
   SourceMenu.row(provider, refresh) -> the item for the Sources list in
                                        settings_menu.lua (name + state)
@@ -174,7 +175,16 @@ local function items_for(provider, refresh)
             callback = function() test_connection(provider) end,
         }
     end
-    -- Ticket #6 adds "Shelves on home" here when the provider declares shelves.
+    if type(provider.shelves) == "table" and #provider.shelves > 0 then
+        t[#t + 1] = {
+            text = _("Shelves on home"),
+            mandatory = Settings.shelvesOnHome(provider) and Glyphs.check or "",
+            callback = function()
+                Settings.setShelvesOnHome(provider, not Settings.shelvesOnHome(provider))
+                refresh()
+            end,
+        }
+    end
     return t
 end
 

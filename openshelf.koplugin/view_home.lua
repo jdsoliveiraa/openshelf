@@ -216,9 +216,10 @@ function HomeView:homeRows()
         }), entries)
     end
 
-    -- Browse shelves declared by providers (cached under "<provider id>:<key>";
+    -- Browse shelves of enabled, set-up sources with "Shelves on home" on, in
+    -- source order (Settings.homeShelves; cached under "<provider id>:<key>",
     -- refreshed in the background when stale)
-    for __, shelf in ipairs(Catalog.shelves(Settings.sourceOrder())) do
+    for __, shelf in ipairs(Settings.homeShelves()) do
         local entries, stale = Browse.get(shelf.id)
         if (not entries or stale) and not self.browse_requested[shelf.id] and NetworkMgr:isConnected() then
             self.browse_requested[shelf.id] = true

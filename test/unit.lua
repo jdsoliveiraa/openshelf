@@ -966,6 +966,36 @@ Settings.setProviderSetting("keyed", "token", nil)
 eq(ls_data.provider_settings.keyed.token, nil, "clearing a field removes it from the file")
 eq(Settings.needsSetup(keyed), "token", "cleared -> needs setup again")
 
+print("== Settings: home shelves (PROVIDERS.md 5.3, DESIGN.md 9.5, decision 53) ==")
+local function shelf_ids()
+    local ids_out = {}
+    for __, s in ipairs(Settings.homeShelves()) do ids_out[#ids_out + 1] = s.id end
+    return table.concat(ids_out, ",")
+end
+local gated = { api = 1, id = "gated", name = "Gated", settings = {
+        { key = "token", title = "Token", type = "secret", required = true } },
+    shelves = { { key = "top", title = "Gated top" } },
+    search = function() return {}, false end, resolve = function() end,
+    browse = function() return {} end }
+check(Catalog.register(gated), "shelved provider with a required field registers")
+Settings.setSourceOrder({ "shelfy", "gated", "gutendex" })
+eq(shelf_ids(), "shelfy:picks,gutendex:popular,gutendex:new,fake_shelf:popular",
+   "enabled sources' shelves in arranged order; the Needs-setup source has none")
+eq(Settings.shelvesOnHome(Catalog.byId("shelfy")), true, "Shelves on home defaults to on")
+Settings.setShelvesOnHome(Catalog.byId("shelfy"), false)
+eq(Settings.shelvesOnHome(Catalog.byId("shelfy")), false, "toggle off stored")
+eq(ls_data.shelves_hidden.shelfy, true, "stored per provider id under shelves_hidden")
+eq(shelf_ids(), "gutendex:popular,gutendex:new,fake_shelf:popular", "toggle off hides that source's shelves")
+eq(Settings.enabledIds({ Catalog.byId("shelfy") })[1], "shelfy", "…without touching search")
+Settings.setShelvesOnHome(Catalog.byId("shelfy"), true)
+eq(ls_data.shelves_hidden.shelfy, nil, "toggle back on clears the key")
+Settings.setProviderSetting("gated", "token", "t")
+eq(shelf_ids(), "shelfy:picks,gated:top,gutendex:popular,gutendex:new,fake_shelf:popular",
+   "set up -> its shelves appear in its slot")
+Settings.setEnabled(gut_p, false)
+eq(shelf_ids(), "shelfy:picks,gated:top,fake_shelf:popular", "disabling a source hides its shelves")
+Settings.setEnabled(gut_p, true)
+
 print("== Jobs deadline (DESIGN.md 9.6, decision 45) ==")
 -- The real jobs.lua, driven through Jobs.run with a fake UIManager whose
 -- clock the test advances and a fake ffi/util whose child only finishes

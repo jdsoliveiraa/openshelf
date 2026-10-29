@@ -5,6 +5,7 @@ Everything about a source is keyed by its provider id (DESIGN.md §9.2, §9.5):
   - enabled_sources   { [id] = true }  default-off providers the user switched on
   - provider_settings { [id] = { key = value } }  per-provider fields (PROVIDERS.md §7)
   - source_order      { id, … }        user-arranged order (Catalog.orderIds merges it)
+  - shelves_hidden    { [id] = true }  sources whose "Shelves on home" is off
   - default_view ("list" | "grid"), per_source (page size), recents (newest
     first, max 8), home_mode (open at start and after each book)
 A v0.5 file keyed disabled_sources by display name; it is rewritten to ids
@@ -102,6 +103,34 @@ end
 -- slots (with enabledIds), the filter dialog and Sources iterate.
 function Settings.orderedProviders()
     return Catalog.ordered(Settings.sourceOrder())
+end
+
+---------------------------------------------------------------------------
+-- Home shelves (PROVIDERS.md §5.3, DESIGN.md §9.5): a source's submenu
+-- "Shelves on home" toggle, default on, so only the off ones are stored:
+-- shelves_hidden = { [id] = true }. Search never looks at it.
+---------------------------------------------------------------------------
+function Settings.shelvesOnHome(p)
+    local hidden = s():readSetting("shelves_hidden") or {}
+    return not hidden[p.id]
+end
+
+function Settings.setShelvesOnHome(p, on)
+    local hidden = s():readSetting("shelves_hidden") or {}
+    hidden[p.id] = (not on) and true or nil
+    save("shelves_hidden", hidden)
+end
+
+-- The shelves home shows, in source order: those of sources that are
+-- enabled, not in Needs setup, and have "Shelves on home" on.
+function Settings.homeShelves()
+    local shown = {}
+    for __, id in ipairs(Settings.enabledIds(Settings.orderedProviders())) do shown[id] = true end
+    local out = {}
+    for __, shelf in ipairs(Catalog.shelves(Settings.sourceOrder())) do
+        if shown[shelf.provider.id] and Settings.shelvesOnHome(shelf.provider) then out[#out + 1] = shelf end
+    end
+    return out
 end
 
 ---------------------------------------------------------------------------
