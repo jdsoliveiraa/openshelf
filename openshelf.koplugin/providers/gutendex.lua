@@ -60,10 +60,10 @@ function P.parse(data, limit, ctx)
     return results, has_more
 end
 
--- Gutendex serves a fixed 32 rows per page; OpenShelf pages by `limit`
--- (10, 15 or 30 for search, 12 for shelves). OpenShelf page N is result
--- offsets [(N-1)*limit, N*limit), so it spans one or two Gutendex pages;
--- fetch those and slice.
+-- Gutendex serves a fixed 32 rows per page; search pages by `limit`
+-- (10, 15 or 30). OpenShelf search page N is result offsets
+-- [(N-1)*limit, N*limit), so it spans one or two Gutendex pages; fetch
+-- those and slice. (Shelves page one Gutendex page at a time: P.browse.)
 local GUTENDEX_PAGE = 32
 
 --- Rows of OpenShelf page `page` from `fetch(gutendex_page) → data, err`.
@@ -98,16 +98,15 @@ function P.search(query, limit, page, ctx)
     return entries, has_more
 end
 
--- Shelves page like search (PROVIDERS.md §5.3): page N of `limit` rows
--- through the same Gutendex window, so "See all" shows every book once.
+-- Shelves (PROVIDERS.md §5.3): shelf page N is exactly Gutendex page N, one
+-- request, every EPUB row in it (the host's browse page size is 32, one
+-- Gutendex page); has_more from Gutendex's `next`.
 function P.browse(key, limit, ctx, page)
     local q = SHELF_QUERY[key]
     if not q then return nil, "unknown shelf: " .. tostring(key) end
-    limit = limit or 12
-    local rows, has_more = P.window(function(n) return ctx.http.getJSON(shelf_url(q, n)) end, limit, page or 1)
-    if not rows then return nil, has_more end
-    local entries = P.parse({ results = rows }, limit, ctx)
-    return entries, has_more
+    local data, err = ctx.http.getJSON(shelf_url(q, page or 1))
+    if not data then return nil, err end
+    return P.parse(data, limit or GUTENDEX_PAGE, ctx)
 end
 
 function P.resolve(locator)

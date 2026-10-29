@@ -217,11 +217,13 @@ with the GET. A borrow row resolves here too. Return `nil, "reason"` when the
 file is not available; the reason is shown to the user verbatim.
 
 ### 5.3 `browse(key, limit, ctx, page) → entries, has_more`
-`key` is one of your `shelves` keys. `limit` is the shelf size (12 today) on
-every page. `page` starts at 1 and is optional: absent or `nil` means 1. Page
-1 is cached on disk for 24 h under `<id>:<key>` and shown as a home shelf
-while the source is enabled and its "Shelves on home" toggle is on; the
-shelf's *See all* opens on that cached page.
+`key` is one of your `shelves` keys. `limit` is the browse page size (32
+today), the same on every page; return up to `limit` rows (fewer is fine).
+The home row shows only as many covers as fit; *See all* shows the whole
+page. `page` starts at 1 and is optional: absent or `nil` means 1. Page 1 is
+cached on disk for 24 h under `<id>:<key>` and shown as a home shelf while
+the source is enabled and its "Shelves on home" toggle is on; the shelf's
+*See all* opens on that cached page.
 
 `has_more` is a boolean, as in §5.1: `true` when another page exists. *See
 all* then ends in *Load more*, which calls `browse` again with `page + 1`.
@@ -420,9 +422,9 @@ for. `provider_check` runs, in order:
 5. **rows** — every row must be plain data (no functions, no cycles), have a
    locator of strings and numbers with a usable identity (§4.2), a known
    `action`, and keep that identity through a JSON round trip.
-6. **shelves** — `browse(key, 12, ctx, 1)` for every shelf, same row checks;
-   fails on more than 12 rows or a `has_more` that is neither a boolean nor
-   absent. When page 1 says `has_more = true`, page 2 is fetched and checked
+6. **shelves** — `browse(key, 32, ctx, 1)` (32 = the browse page size) for
+   every shelf, same row checks; fails on more rows than that `limit` or a
+   `has_more` that is neither a boolean nor absent. When page 1 says `has_more = true`, page 2 is fetched and checked
    the same way, and fails if it repeats a row of page 1 (`page` ignored).
 7. **resolve** — the first row that is not a buy row, from its *round-tripped*
    locator (as a fresh process would), through the host's normalization.

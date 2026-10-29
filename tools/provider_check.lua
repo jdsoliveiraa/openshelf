@@ -72,7 +72,7 @@ local Check = {}
 
 Check.DEFAULT_QUERY = "pride and prejudice"
 Check.DEFAULT_LIMIT = 10
-Check.SHELF_LIMIT = 12   -- browse.lua's SHELF_SIZE
+Check.SHELF_LIMIT = 32   -- browse page size: browse.lua's PAGE_SIZE
 
 Check.USAGE = [==[usage: luajit tools/provider_check.lua <provider.lua> ["query"] [--set key=value]... [--limit N] [--download] [--offline]==]
 

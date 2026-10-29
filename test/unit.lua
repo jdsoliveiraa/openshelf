@@ -514,8 +514,8 @@ do
 end
 
 print("== Gutendex shelves: See all pages, every row once (#12) ==")
--- Same synthetic Gutendex as #1, keyed by the shelf's sort: browse pages at
--- the shelf size (12) through P.window, page 1 equals the home shelf.
+-- Same synthetic Gutendex as #1, keyed by the shelf's sort. Browse pages at
+-- the browse page size (32): shelf page N is exactly Gutendex page N.
 do
     local function gutendex(total)
         local requests, urls = 0, {}
@@ -540,23 +540,23 @@ do
         return ctx, function() local r = requests; requests = 0; return r end, urls
     end
     for __, key in ipairs({ "popular", "new" }) do
-        for ___, total in ipairs({ 0, 5, 12, 13, 32, 33, 64, 75, 100 }) do
+        for ___, total in ipairs({ 0, 5, 12, 13, 31, 32, 33, 64, 75, 100 }) do
             local ctx, reqs = gutendex(total)
             local seen, dups, ok_more, max_req, ok_size = {}, 0, true, 0, true
             local page, more = 0, true
             while more and page < 50 do
                 page = page + 1
-                local rows, has_more = Gut.browse(key, 12, ctx, page)
+                local rows, has_more = Gut.browse(key, 32, ctx, page)
                 assert(rows, "gutendex browse failed: " .. tostring(has_more))
                 max_req = math.max(max_req, reqs())
-                if #rows > 12 then ok_size = false end
+                if #rows > 32 then ok_size = false end
                 if type(has_more) ~= "boolean" then ok_more = false end
                 for ____, r in ipairs(rows) do
                     local id = tonumber(r.locator.url:match("/(%d+)%.epub$"))
                     if seen[id] then dups = dups + 1 end
                     seen[id] = true
                 end
-                if has_more ~= (page * 12 < total) then ok_more = false end
+                if has_more ~= (page * 32 < total) then ok_more = false end
                 more = has_more
             end
             local missing = 0
@@ -567,23 +567,24 @@ do
             eq(missing, 0, tag .. ": every EPUB row shown across pages")
             eq(dups, 0, tag .. ": no row shown twice")
             check(ok_more, tag .. ": has_more is a boolean, true exactly while rows remain")
-            check(ok_size, tag .. ": never more than 12 rows")
-            check(max_req <= 2, tag .. ": at most two requests per page", max_req)
+            check(ok_size, tag .. ": never more than 32 rows")
+            check(max_req <= 1, tag .. ": one request per page", max_req)
         end
     end
     local ctx, __, urls = gutendex(100)
-    local p1 = Gut.browse("popular", 12, ctx)
-    local p1b = Gut.browse("popular", 12, ctx, 1)
+    local p1 = Gut.browse("popular", 32, ctx)
+    local p1b = Gut.browse("popular", 32, ctx, 1)
     eq(#p1, #p1b, "browse without page = page 1")
+    eq(#p1, 28, "page 1 = every EPUB row of Gutendex page 1 (32 rows, 4 without EPUB)")
     eq(p1[1].locator.url, p1b[1].locator.url, "browse without page = page 1 (same rows)")
     eq(urls[1], "https://gutendex.com/books/?sort=popular", "page 1 keeps the plain (cached) shelf URL")
-    Gut.browse("new", 12, ctx, 3)
-    eq(urls[#urls], "https://gutendex.com/books/?page=2&sort=descending",
-       "new shelf page 3 (offsets 24-35) reads Gutendex page 2, in Gutendex's own `next` URL shape")
-    local none, berr = Gut.browse("nope", 12, ctx, 1)
+    Gut.browse("new", 32, ctx, 3)
+    eq(urls[#urls], "https://gutendex.com/books/?page=3&sort=descending",
+       "new shelf page 3 reads Gutendex page 3, in Gutendex's own `next` URL shape")
+    local none, berr = Gut.browse("nope", 32, ctx, 1)
     check(none == nil and tostring(berr):find("unknown shelf", 1, true), "unknown shelf key -> error", berr)
     local fctx = setmetatable({ http = { getJSON = function() return nil, "HTTP 503" end } }, { __index = CTX })
-    local frows, ferr = Gut.browse("popular", 12, fctx, 2)
+    local frows, ferr = Gut.browse("popular", 32, fctx, 2)
     check(frows == nil and ferr == "HTTP 503", "a failed request -> nil, err", ferr)
 end
 
@@ -616,15 +617,19 @@ do
     local legacy = ShelfPager.new{ entries = rows(1, 3), has_more = "yes" }
     check(not legacy:canLoadMore(), "only has_more == true counts")
     -- cache shape
-    local ce, more, was_legacy = ShelfPager.unpack(ShelfPager.pack(rows(1, 2), true))
-    check(#ce == 2 and more == true and was_legacy == false, "pack/unpack keeps entries and has_more")
-    ce, more, was_legacy = ShelfPager.unpack(rows(1, 2))
-    check(#ce == 2 and more == false and was_legacy == true, "pre-#12 cache (bare list) -> has_more false, legacy")
+    local ce, more, outdated = ShelfPager.unpack(ShelfPager.pack(rows(1, 2), true, 32), 32)
+    check(#ce == 2 and more == true and outdated == false, "pack/unpack keeps entries and has_more at the same size")
+    ce, more, outdated = ShelfPager.unpack(ShelfPager.pack(rows(1, 2), true, 12), 32)
+    check(#ce == 2 and more == true and outdated == true, "cache fetched at another page size -> outdated (refresh)")
+    ce, more, outdated = ShelfPager.unpack({ entries = rows(1, 2), has_more = true }, 32)
+    check(#ce == 2 and more == true and outdated == true, "cache without a size (first #12 draft, 12 rows) -> outdated")
+    ce, more, outdated = ShelfPager.unpack(rows(1, 2), 32)
+    check(#ce == 2 and more == false and outdated == true, "pre-#12 cache (bare list) -> has_more false, outdated")
     ce = ShelfPager.unpack(nil)
     eq(ce, nil, "nothing cached -> nil")
     local JSON_ = require("json")
-    ce, more = ShelfPager.unpack(JSON_.decode(JSON_.encode(ShelfPager.pack(rows(1, 1), true))))
-    check(#ce == 1 and more == true, "cache value survives JSON")
+    ce, more, outdated = ShelfPager.unpack(JSON_.decode(JSON_.encode(ShelfPager.pack(rows(1, 1), true, 32))), 32)
+    check(#ce == 1 and more == true and outdated == false, "cache value survives JSON")
 end
 
 print("== Library migration v1 -> v2 (recorded v0.5 file) ==")

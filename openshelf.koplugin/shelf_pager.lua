@@ -14,9 +14,11 @@ the cache through pack/unpack.
 The host asks for page N+1 only after page N said has_more == true, and
 never while a fetch is running.
 
-Cache value (openshelf_browse.json): { entries = {…}, has_more = bool }.
-Files written before #12 hold the bare entry list; unpack reads those as
-has_more = false and flags them `legacy` so the caller refreshes them.
+Cache value (openshelf_browse.json): { entries = {…}, has_more = bool,
+size = browse page size it was fetched at }. unpack(value, size) flags a
+value as `outdated` when its size differs (or is missing: the first #12
+draft cached 12-row pages without it) or when it is a bare entry list
+(before #12, read as has_more = false), so the caller refreshes it.
 --]]
 local Entry = require("entry")
 
@@ -77,16 +79,17 @@ function ShelfPager:fail(err)
     self.err = tostring(err or "failed")
 end
 
---- Page 1 as stored in the browse cache.
-function ShelfPager.pack(entries, has_more)
-    return { entries = entries or {}, has_more = has_more == true }
+--- Page 1 as stored in the browse cache, with the page size it was fetched at.
+function ShelfPager.pack(entries, has_more, size)
+    return { entries = entries or {}, has_more = has_more == true, size = size }
 end
 
---- Cached value -> entries, has_more, legacy. A bare list is a pre-#12 file.
-function ShelfPager.unpack(value)
+--- Cached value -> entries, has_more, outdated (fetched at another page size
+--- than `size`, or a pre-#12 bare list).
+function ShelfPager.unpack(value, size)
     if type(value) ~= "table" then return nil, false, false end
     if type(value.entries) == "table" then
-        return value.entries, value.has_more == true, false
+        return value.entries, value.has_more == true, value.size ~= size
     end
     return value, false, true
 end

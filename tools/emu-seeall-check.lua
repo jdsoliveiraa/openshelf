@@ -1,11 +1,11 @@
 -- Ticket #12 check for the KOReader emulator: a shelf's "See all" pages past
--- the 12 cached books with Load more.
---   home (Gutenberg shelves) -> tap "See all" on Popular -> last page shows
---   Load more -> tap it -> 24 books, lands on the page with book 13 -> again
---   -> 36 -> grid view (last page full) -> a forced failure shows in the
---   status strip, Load more stays -> retry works and turns to the page with
---   book 37 -> "New on Gutenberg" See all + Load more ->
---   an old-style provider's shelf (browse returns entries only): no Load more.
+-- the cached first page with Load more (browse page size 32).
+--   home -> "See all" on Popular (live Gutendex) -> last page shows Load more
+--   -> tap it -> Gutendex page 2 appended -> same on New -> a dev shelf
+--   (offline, 27 rows a page, 3 pages) in grid: last page full -> a forced
+--   failure shows in the status strip, Load more stays -> retry turns to the
+--   page with book 28 -> page 3 says no more: no Load more -> an old-style
+--   provider's shelf (browse returns entries only): no Load more.
 -- Internet Archive and DOAB are switched off so nothing else hits the network.
 -- Run via
 --   scripts/emu.sh --walk tools/emu-seeall-check.lua --shots <dir>
@@ -50,10 +50,24 @@ Catalog.register{ api = 1, id = "oldie", name = "Old Books", quality = 10,
         return rows
     end,
     resolve = function(l) return l.url end }
+-- A paged dev shelf with known sizes: 27 rows (three full 3x3 grid pages) a page, 3 pages.
+Catalog.register{ api = 1, id = "pagey", name = "Dev Pages", quality = 10,
+    shelves = { { key = "all", title = "Dev pages" } },
+    search = function() return {}, false end,
+    browse = function(key, _limit, ctx, page)
+        page = page or 1
+        local rows = {}
+        for i = (page - 1) * 27 + 1, page * 27 do
+            rows[#rows + 1] = ctx.Entry.new{ title = "Dev book " .. i, author = "Dev Pages",
+                locator = { url = "https://dev/pagey/" .. key .. "/" .. i } }
+        end
+        return rows, page < 3
+    end,
+    resolve = function(l) return l.url end }
 for __, p in ipairs(Catalog.providers) do Settings.setEnabled(p, true) end
 for __, id in ipairs({ "internetarchive", "doab" }) do Settings.setEnabled(Catalog.byId(id), false) end
-for __, id in ipairs({ "gutendex", "oldie" }) do Settings.setShelvesOnHome(Catalog.byId(id), true) end
-Settings.setSourceOrder({ "gutendex", "oldie" })
+for __, id in ipairs({ "gutendex", "pagey", "oldie" }) do Settings.setShelvesOnHome(Catalog.byId(id), true) end
+Settings.setSourceOrder({ "gutendex", "pagey", "oldie" })
 
 -- Sequential steps; wait(pred) polls once a second up to WAIT seconds.
 local steps, idx = {}, 0
@@ -137,106 +151,116 @@ local function see_all(title)
     h.openSearchDialog, h.openList = nil, nil
     error("no See all for " .. title)
 end
-local function cached(id) local e = Browse.get(id); return e and #e > 0 end
+local function cached(id)
+    local e, stale = Browse.get(id)
+    return e and #e > 0 and not stale
+end
+local function done_loading() local l = list(); return l and not l.pager.loading end
+local function shows(l, entry)
+    for __, e in ipairs(l.page_entries) do if e == entry then return true end end
+    return false
+end
+-- Tap Load more on the last page; remembers how many books were shown before.
+local before = 0
+local function press_load_more()
+    local l = list(); l:goPage(l.total_pages)
+    before = #l.entries
+    tap(l, load_more_hit(l))
+end
 
 add("home", function() home():goHome() end, nil, 2)
 add("shelves cached", function()
-    local e, stale, more = Browse.get("gutendex:popular")
-    log("CACHE popular", #e, "stale", tostring(stale), "has_more", tostring(more))
-    local n, ___, nmore = Browse.get("gutendex:new")
-    log("CACHE new", #n, "has_more", tostring(nmore))
+    for __, id in ipairs({ "gutendex:popular", "gutendex:new", "pagey:all", "oldie:picks" }) do
+        local e, stale, more = Browse.get(id)
+        log("CACHE", id, #e, "stale", tostring(stale), "has_more", tostring(more))
+    end
     home():rebuild(); shot("home")
-end, function() return cached("gutendex:popular") and cached("gutendex:new") and cached("oldie:picks") end, 3)
+end, function()
+    return cached("gutendex:popular") and cached("gutendex:new") and cached("pagey:all") and cached("oldie:picks")
+end, 3)
 
--- Popular: page 1 from the cache, Load more on the last list page
+-- Popular (live Gutendex): page 1 is one Gutendex page from the cache
 add("See all: Popular", function() see_all("Popular on Gutenberg") end, nil, 2)
 add("popular p1", function()
-    dump("p1 first page"); shot("popular-p1-first-page")
-    local l = list(); l:goPage(l.total_pages)
+    local l = list(); dump("popular p1"); shot("popular-p1-first-page")
+    expect(#l.entries > 12 and #l.entries <= 32 and l.pager.has_more, "See all opens on the cached page (13-32 books, has_more)")
+    l:goPage(l.total_pages)
 end, list, 2)
 add("popular p1 last page", function()
-    local l = list()
-    dump("p1 last page")
-    expect(#l.entries == 12, "See all opens with the 12 cached books")
-    expect(load_more_hit(l) ~= nil, "last page ends in Load more")
+    local l = list(); dump("popular p1 last page")
+    expect(load_more_hit(l) ~= nil, "Popular: last page ends in Load more")
     shot("popular-p1-last-page-load-more")
-    tap(l, load_more_hit(l))
-end, nil, 0)
-add("popular loading", function() dump("loading") end, nil, 0)
-add("popular p2 landed", function()
-    local l = list()
-    dump("after load more #1")
-    expect(#l.entries == 24, "Load more appends the next 12 (24)")
-    local shows13 = false
-    for __, e in ipairs(l.page_entries) do if e == l.entries[13] then shows13 = true end end
-    expect(shows13, "view shows book 13 (same page when it had room, else the next)")
-    shot("popular-after-load-more-1")
-end, function() local l = list(); return l and not l.pager.loading end, 2)
-add("popular load more #2", function()
-    local l = list(); l:goPage(l.total_pages)
-    tap(l, load_more_hit(l))
-end, nil, 0)
-add("popular p3 landed", function()
-    local l = list()
-    dump("after load more #2")
-    expect(#l.entries == 36, "second Load more appends again (36)")
-    shot("popular-after-load-more-2")
-end, function() local l = list(); return l and not l.pager.loading end, 2)
-
--- Grid: 36 books fill the last 3x3 page exactly, so the next Load more must turn the page
-add("grid", function() local l = list(); l:toggleView(); l:goPage(l.total_pages) end, nil, 2)
-add("grid last page", function()
-    local l = list(); dump("grid")
-    expect(#l.page_entries == 9 and l.page_entries[9] == l.entries[36], "grid: last page full (books 28-36)")
-    shot("popular-grid-full-last-page")
 end, nil, 1)
+add("popular load more", press_load_more, nil, 0)
+add("popular p2 landed", function()
+    local l = list(); dump("popular after load more")
+    expect(#l.entries > before + 12 and l.pager.page == 2 and l.pager.err == nil,
+        ("Popular: Load more appends Gutendex page 2 (%d -> %d)"):format(before, #l.entries))
+    expect(shows(l, l.entries[before + 1]), "Popular: view shows the first new book")
+    shot("popular-after-load-more")
+end, done_loading, 2)
+add("close popular", function() list():close() end, nil, 2)
 
--- Failure: the next page errors once
+-- New (live Gutendex)
+add("See all: New", function() see_all("New on Gutenberg") end, nil, 2)
+add("new p1", function()
+    local l = list(); dump("new p1")
+    expect(load_more_hit(l) ~= nil or l.total_pages > 1, "New: opens on the cached page")
+    l:goPage(l.total_pages)
+end, list, 1)
+add("new p1 last page", function()
+    local l = list(); shot("new-p1-last-page")
+    expect(load_more_hit(l) ~= nil, "New: Load more shown")
+end, nil, 1)
+add("new load more", press_load_more, nil, 0)
+add("new p2 landed", function()
+    local l = list(); dump("new after load more")
+    expect(#l.entries > before and l.pager.page == 2 and l.pager.err == nil,
+        ("New: page 2 appended (%d -> %d)"):format(before, #l.entries))
+    shot("new-after-load-more")
+end, done_loading, 2)
+add("close new", function() list():close() end, nil, 2)
+
+-- Dev shelf (offline, 27 rows a page, 3 pages): grid page turn, failure, retry, end of shelf
+add("See all: Dev", function() see_all("Dev pages") end, nil, 2)
+add("dev grid", function() local l = list(); l.view_mode = "list"; l:toggleView(); l:goPage(l.total_pages) end, list, 2)
+add("dev grid last page", function()
+    local l = list(); dump("dev grid")
+    expect(#l.entries == 27 and #l.page_entries == 9 and l.page_entries[9] == l.entries[27],
+        "dev: 27 books, grid last page full (19-27)")
+    shot("dev-grid-full-last-page")
+end, nil, 1)
 add("forced failure", function()
     local real = Catalog.browse
     Catalog.browse = function()
         Catalog.browse = real
         return nil, "HTTP 503 (forced by the check)"
     end
-    local l = list(); l:goPage(l.total_pages)
-    tap(l, load_more_hit(l))
+    press_load_more()
 end, nil, 0)
 add("failure shown", function()
-    local l = list()
-    dump("after failure")
-    expect(l.pager.err ~= nil and #l.entries == 36, "failure keeps the 36 books and records the error")
+    local l = list(); dump("after failure")
+    expect(l.pager.err ~= nil and #l.entries == 27, "failure keeps the 27 books and records the error")
     expect(load_more_hit(l) ~= nil, "Load more stays to retry")
-    shot("popular-load-more-failed")
+    shot("dev-load-more-failed")
     l:showStatusDetail()
-end, function() local l = list(); return l and not l.pager.loading end, 2)
-add("failure detail", function()
-    shot("popular-failure-detail"); UIManager:close(top())
-end, nil, 1)
-add("retry", function()
-    local l = list(); tap(l, load_more_hit(l))
-end, nil, 0)
+end, done_loading, 2)
+add("failure detail", function() shot("dev-failure-detail"); UIManager:close(top()) end, nil, 1)
+add("retry", press_load_more, nil, 0)
 add("retry landed", function()
-    local l = list()
-    dump("after retry")
-    expect(#l.entries == 48 and l.pager.err == nil, "retry fetches the same page (48), error cleared")
-    expect(l.page_entries[1] == l.entries[37], "full last page -> turned to the page starting with book 37")
-    shot("popular-grid-after-retry-page-turn")
-end, function() local l = list(); return l and not l.pager.loading end, 2)
-add("close popular", function() list():close() end, nil, 2)
-
--- New on Gutenberg
-add("See all: New", function() see_all("New on Gutenberg") end, nil, 2)
-add("new p1", function()
-    local l = list(); l:goPage(l.total_pages); dump("new p1"); shot("new-p1-last-page")
-    expect(load_more_hit(l) ~= nil, "New: Load more shown")
-    tap(l, load_more_hit(l))
-end, list, 0)
-add("new p2 landed", function()
-    local l = list(); dump("new after load more")
-    expect(l.pager.page == 2 and l.pager.err == nil, "New: page 2 appended")
-    shot("new-after-load-more")
-end, function() local l = list(); return l and not l.pager.loading end, 2)
-add("close new", function() list():close() end, nil, 2)
+    local l = list(); dump("after retry")
+    expect(#l.entries == 54 and l.pager.err == nil, "retry fetches the same page (54), error cleared")
+    expect(l.page_entries[1] == l.entries[28], "full last page -> turned to the page starting with book 28")
+    shot("dev-grid-after-retry-page-turn")
+end, done_loading, 2)
+add("dev last", press_load_more, nil, 0)
+add("dev end", function()
+    local l = list(); l:goPage(l.total_pages); dump("dev end")
+    expect(#l.entries == 81 and not l.pager.has_more and load_more_hit(l) == nil,
+        "last page said has_more false -> 81 books, no Load more")
+    shot("dev-end-no-load-more")
+end, done_loading, 2)
+add("close dev", function() list():close() end, nil, 2)
 
 -- Old-style provider: single page, no Load more
 add("See all: old-style", function() see_all("Old-style picks") end, nil, 2)

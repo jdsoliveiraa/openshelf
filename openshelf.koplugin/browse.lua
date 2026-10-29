@@ -8,9 +8,10 @@ registered provider declares (Catalog.shelves(); Gutenberg "popular" and
   Browse.refresh("gutendex:popular", function(entries) … end)
   Browse.fetchPage("gutendex:popular", 2, on_done(entries, has_more), on_error(err))
 
-Every page is SHELF_SIZE rows, so page 1 is the cached home shelf and "See
-all" pages on from there (ticket #12); only page 1 is cached, with its
-has_more.
+Every fetch asks for PAGE_SIZE rows (the browse page size), so page 1 is
+the cached home shelf (the home row shows only what fits) and "See all"
+pages on from there (ticket #12). Only page 1 is cached, with its has_more
+and the page size it was fetched at.
 --]]
 local DataStorage = require("datastorage")
 local Catalog = require("catalog")
@@ -21,7 +22,9 @@ local TTLCache = require("ttlcache")
 
 local Browse = {}
 
-Browse.SHELF_SIZE = 12
+-- Browse page size: the `limit` of every browse call (PROVIDERS.md §5.3).
+-- One Gutendex page; not how many covers a home row shows.
+Browse.PAGE_SIZE = 32
 local TTL = 24 * 3600
 
 local cache
@@ -37,12 +40,13 @@ local function c()
     return cache
 end
 
---- Cached page 1 → entries, stale, has_more. A cache written before #12
--- (a bare entry list) reads as stale, so it is refreshed and gains has_more.
+--- Cached page 1 → entries, stale, has_more. A cache written at another
+-- page size (or before #12, as a bare entry list) reads as stale, so it is
+-- refreshed at PAGE_SIZE and gains has_more; its rows still show meanwhile.
 function Browse.get(kind)
     local value, stale = c():get(kind)
-    local entries, has_more, legacy = ShelfPager.unpack(value)
-    return entries, stale or legacy, has_more
+    local entries, has_more, outdated = ShelfPager.unpack(value, Browse.PAGE_SIZE)
+    return entries, stale or outdated, has_more
 end
 
 local function page_task(kind, size, page)
@@ -57,14 +61,14 @@ local inflight = {}
 
 function Browse.refresh(kind, on_done)
     if inflight[kind] then return inflight[kind] end
-    local size = Browse.SHELF_SIZE
+    local size = Browse.PAGE_SIZE
     inflight[kind] = Jobs.run{
         timeout = Jobs.DEADLINE,
         task = page_task(kind, size, 1),
         on_done = function(res)
             inflight[kind] = nil
             local entries = type(res) == "table" and res.entries or nil
-            if entries and #entries > 0 then c():set(kind, ShelfPager.pack(entries, res.has_more)) end
+            if entries and #entries > 0 then c():set(kind, ShelfPager.pack(entries, res.has_more, size)) end
             if on_done then on_done(entries) end
         end,
         on_error = function()
@@ -80,7 +84,7 @@ end
 function Browse.fetchPage(kind, page, on_done, on_error)
     return Jobs.run{
         timeout = Jobs.DEADLINE,
-        task = page_task(kind, Browse.SHELF_SIZE, page),
+        task = page_task(kind, Browse.PAGE_SIZE, page),
         on_done = function(res)
             if type(res) ~= "table" or type(res.entries) ~= "table" then
                 on_error("browse failed")
