@@ -1,0 +1,31 @@
+name: release
+
+# Push a tag vX.Y.Z on main: run the checks, zip the plugin, publish a release.
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write
+
+jobs:
+  check:
+    uses: ./.github/workflows/check.yml
+
+  release:
+    needs: check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Tag must match openshelf_version.lua
+        run: |
+          v="$(sed -n 's/^return "\(.*\)"/\1/p' openshelf.koplugin/openshelf_version.lua)"
+          [ "v$v" = "$GITHUB_REF_NAME" ] || { echo "tag $GITHUB_REF_NAME != version v$v"; exit 1; }
+      - name: Zip plugin
+        run: |
+          find openshelf.koplugin \( -name '.DS_Store' -o -name '._*' \) -delete
+          zip -qr "openshelf-$GITHUB_REF_NAME.zip" openshelf.koplugin
+      - name: Publish GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create "$GITHUB_REF_NAME" "openshelf-$GITHUB_REF_NAME.zip" --title "OpenShelf $GITHUB_REF_NAME" --generate-notes --verify-tag

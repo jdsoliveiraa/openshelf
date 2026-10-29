@@ -6,20 +6,33 @@
 #     the device's .adds/koreader/settings/SSH/authorized_keys)
 #   - on the device: Settings (gear) → Network → SSH server → started
 #
-# Usage: scripts/deploy.sh [ssh-host]      (default host alias: kobo)
-#        SKIP_CHECKS=1 scripts/deploy.sh   (skip luacheck + unit test)
+# Usage: scripts/deploy.sh [--dev] [ssh-host]   (default host alias: kobo)
+#        SKIP_CHECKS=1 scripts/deploy.sh       (skip luacheck + unit test)
+# The device runs release tags (vX.Y.Z). An untagged or dirty checkout is
+# refused unless --dev is given (main carries in-progress work).
 #
 # Stages the folder next to the live one, swaps it in, syncs, then compares
 # every file's md5 with the local copy. Restart KOReader afterwards
 # (top menu → Exit → Restart KOReader) so the new version is loaded.
 set -euo pipefail
 
+DEV=""
+if [ "${1:-}" = "--dev" ]; then DEV=1; shift; fi
 HOST="${1:-kobo}"
 PLUGINS=/mnt/onboard/.adds/koreader/plugins
 NAME=openshelf.koplugin
 SSH=(ssh -o BatchMode=yes -o ConnectTimeout=8 "$HOST")
 
 cd "$(dirname "$0")/.."
+
+tag="$(git describe --tags --exact-match 2>/dev/null || true)"
+if [ -z "$tag" ] || [ -n "$(git status --porcelain -- openshelf.koplugin)" ]; then
+  if [ -z "$DEV" ]; then
+    echo "deploy: HEAD is not a clean release tag (${tag:-untagged}). Check out a vX.Y.Z tag, or pass --dev." >&2
+    exit 1
+  fi
+  echo "deploy: --dev: deploying untagged $(git rev-parse --short HEAD)" >&2
+fi
 
 if [ -z "${SKIP_CHECKS:-}" ]; then
   if command -v luacheck >/dev/null && command -v luajit >/dev/null; then

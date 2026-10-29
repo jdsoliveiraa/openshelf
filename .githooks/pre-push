@@ -1,0 +1,12 @@
+#!/bin/sh
+# Refuse direct pushes to main: everything lands through a squash-merged PR
+# (docs/agents/workflow.md). Override once with FORCE_MAIN=1 git push ...
+# Enable per clone: git config core.hooksPath .githooks
+while read -r local_ref local_sha remote_ref remote_sha; do
+  if [ "$remote_ref" = "refs/heads/main" ] && [ -z "${FORCE_MAIN:-}" ]; then
+    echo "pre-push: direct pushes to main are refused; open a PR (scripts/ticket.sh pr)." >&2
+    echo "pre-push: override with FORCE_MAIN=1 only when the workflow says so." >&2
+    exit 1
+  fi
+done
+exit 0

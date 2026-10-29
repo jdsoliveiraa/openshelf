@@ -31,7 +31,9 @@ luarocks --lua-version=5.1 --lua-dir="$LJ" install dkjson
 luarocks --lua-version=5.1 --lua-dir="$LJ" install luasec OPENSSL_DIR="$(brew --prefix openssl@3)"
 ```
 
-CI runs the lint, a LuaJIT load-check of every file, and the unit test.
+CI (`check.yml`, on PRs and main) runs the lint, a LuaJIT load-check of every
+file, and the unit test. The live-API test is a manual workflow (`live.yml`);
+a `v*` tag publishes a release zip (`release.yml`).
 
 ## Emulator (macOS)
 
@@ -104,6 +106,15 @@ device (Exit → Restart KOReader). USB fallback per `TODO_CLARA_HD.md` §5 — 
 `scripts/deploy-launcher.sh` installs the Kobo launcher (`kobo/`: KFMon watch +
 script + icon, listed by NickelMenu's kfmon generator); KFMon only reads it
 after a reboot.
+
+## Workflow
+
+Every change lands on `main` through a squash-merged PR: branch + worktree per
+ticket, CI and a review-agent commit status as the gate, only the
+orchestrator merges. `scripts/ticket.sh` (start / pr / review / land /
+status) runs it; rules in `docs/agents/workflow.md`. Never push to main
+(`git config core.hooksPath .githooks` once per clone). Deploy to the Kobo
+from release tags only (`scripts/deploy.sh --dev` otherwise).
 
 ## Agent skills
 
