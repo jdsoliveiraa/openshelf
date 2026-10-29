@@ -101,7 +101,7 @@ return P
 |---|---|---|---|
 | `api` | integer | yes | Contract version: `1`, or `2` for a provider that uses folders (§4.5). Anything else is rejected (§8.5). |
 | `id` | string | yes | Stable key, `^[a-z][a-z0-9_]*$`, at most 32 bytes. Keys settings, result slots, library records and `Entry.id`. **Never change it** once released: records on users' devices carry it. |
-| `name` | string | yes | Display name, at most 60 bytes. Shown in rows, the detail page, Sources and the filter dialog. May change freely. |
+| `name` | string | yes | Display name, at most 60 bytes. Shown in rows, the detail page, Sources and the filter dialog. May change freely; in api 2 it also names your folder under `OpenShelf/` (§9), so a new name sends new downloads to a new folder. |
 | `quality` | number | no | Prefer-best-edition rank, default `0`. Used for rows that set no `quality` of their own. Built-ins: Gutenberg 80, Internet Archive 60, DOAB 50; 100 is reserved for Standard Ebooks. |
 | `enabled_by_default` | boolean | no | Default `true`. Set `false` for sources that need setup first; the user turns them on in Sources. |
 | `shelves` | list | no | `{ { key = "popular", title = "Popular on …" }, … }`. `key` follows the `id` pattern. Requires `browse`. |
@@ -116,11 +116,14 @@ return P
 | `search_in` | function | no (api 2) | §5.6 |
 
 Unknown fields are ignored, so you may keep helpers (like `parse` above) on
-the table.
+the table. The api-2 fields (`root`, `dedupe`, `list`, `search_in`) are read
+and validated only when `api = 2`; on api 1 they are unknown fields like any
+helper.
 
 ## 3. `ctx` — everything the host hands you
 
-Every function receives `ctx` as its last argument. **Do not `require`
+Every function receives `ctx` as its last argument (except `browse`, whose
+optional `page` comes after it, §5.3). **Do not `require`
 OpenShelf modules**; when KOReader loads a `provider-*` plugin, OpenShelf's
 folder is not yet on `package.path`, and in-tree providers must stay loadable
 by the offline tests. `ctx` is the whole API:
@@ -144,7 +147,7 @@ by the offline tests. `ctx` is the whole API:
 ### 4.1 Constructor
 ```lua
 ctx.Entry.new{
-    action      = "download",      -- "download" (default) | "borrow" | "buy"
+    action      = "download",      -- "download" (default) | "borrow" | "buy" | "folder" (api 2, §4.5)
     title       = "…",             -- missing → "Untitled"
     author      = "…",             -- missing → "Unknown"
     format      = "epub",          -- "epub" (default) | "pdf" | … ≤ 8 bytes; becomes the file extension
@@ -154,18 +157,21 @@ ctx.Entry.new{
     alternates  = { { format = "pdf", locator = { url = "…" } } },  -- optional
     description = "…", language = "en", year = "1813",            -- optional
     price       = "€4.99",         -- buy rows only, optional
-    size        = 2400000,         -- api 2, optional: bytes, shown and summed by Download all
+    size        = 2400000,         -- api 2, optional: bytes, summed by Download all
     path        = { "Software Seguro", "Labs" },  -- api 2, optional: folders above this file (§4.5)
 }
 ```
 `ctx.Entry.download{…}` is `new` with `action = "download"`.
-`ctx.Entry.folder{…}` builds a folder row (api 2, §4.5). Every string is
+`ctx.Entry.folder{…}` builds a folder row (api 2, §4.5); `new` with
+`action = "folder"` builds the same row. Every string is
 trimmed, whitespace-collapsed and length-capped; non-strings (including JSON
 `null`) become absent.
 
 The host then **stamps** `provider = <your id>` and `source = <your name>` on
 every row, fills `quality` from your provider when a row has none, and computes
 `dedup_key` from title + author. You cannot label rows as another source.
+For an api-1 provider it also drops folder rows and strips `size` and `path`,
+so api-1 rows behave exactly as before.
 
 ### 4.2 Locator
 A locator is a plain table of **strings and numbers only** that your
@@ -224,7 +230,9 @@ ctx.Entry.folder{
 
 - The locator follows §4.2: plain strings and numbers, stable, identity by
   `Entry.id`. The host hands it back to `list` and `search_in`, in another
-  process.
+  process. Folders and files share the `Entry.id` space, so a folder's
+  locator identity must differ from every file's: when your ids are per
+  table (`{ id = 5 }` for both), add a field such as `kind = "folder"`.
 - `search`, `browse`, `list` and `search_in` may all return folder rows.
   Only api-2 providers may; folder rows from an api-1 provider are dropped
   with a log line.
@@ -233,14 +241,14 @@ ctx.Entry.folder{
   deduped or recorded in My books. Mixed with files, they group first under
   a "Folders" header, and they pass any format filter.
 - **`path`** lists titles, outermost first, without the root and without
-  the row itself. On a folder row it says where the folder sits when search
-  or a shelf found it: it becomes the second line (when there is no
-  `subtitle`) and the folder's files are saved under it. On a file row it
-  places the file at `OpenShelf/<your name>/<path…>/<Title>.<ext>`. Fill it
-  whenever you know it, so a file lands in the same place wherever it was
-  found. Without it, a file downloaded inside a folder view goes to that
-  view's directory, and one found elsewhere goes flat into `OpenShelf/` as
-  `<Author> - <Title>.<ext>` (§9).
+  the row itself; `{}` means "directly under your root". On a folder row it
+  says where the folder sits: outside folder views (search, shelves, scoped
+  search) it becomes the second line when there is no `subtitle`, and the
+  folder's files are saved under it. On a file row it places the file at
+  `OpenShelf/<your name>/<path…>/<Title>.<ext>`. Fill it whenever you know
+  it, so a file lands in the same place wherever it was found. Without it,
+  a file that `list` returned goes to that folder's directory, and one found
+  elsewhere goes flat into `OpenShelf/` as `<Author> - <Title>.<ext>` (§9).
 - Prune what the user cannot use: empty folders, and folders holding only
   files KOReader cannot open.
 
@@ -272,7 +280,8 @@ file is not available; the reason is shown to the user verbatim.
 today), the same on every page; return up to `limit` rows (fewer is fine).
 The home row shows only as many covers as fit; *See all* shows the whole
 page. `page` starts at 1 and is optional: absent or `nil` means 1. Page 1 is
-cached on disk for 24 h under `<id>:<key>` and shown as a home shelf while
+kept on disk under `<id>:<key>` (24 h is its refresh age, not an expiry:
+the cached copy keeps showing offline) and shown as a home shelf while
 the source is enabled and its "Shelves on home" toggle is on; the shelf's
 *See all* opens on that cached page.
 
@@ -298,7 +307,8 @@ the order you want them shown (the host puts the folders first). `locator`
 is a folder row's locator, or `nil` for your `root`. `limit` is the folder
 page size (50); return at most that many. `page` starts at 1 and increases
 on *Load more*; `has_more` as in §5.1. An empty folder is `{}, false`, not an
-error; `nil, "reason"` is shown in the folder's status strip with *Retry*.
+error. `nil, "reason"` is shown in the status strip over the cached copy
+when there is one, else as the folder's message with *Retry*.
 
 The host keeps every folder the user opened on disk and shows it offline
 (the Kobo is offline most of the time); it calls `list` again when the copy
@@ -308,7 +318,8 @@ cache of your own.
 
 ### 5.6 `search_in(locator, query, limit, page, ctx) → entries, has_more` (api 2)
 Optional. Searches one folder and everything below it; `locator` is a folder
-row's locator or `nil` for your root, the rest as in §5.1. When you define
+row's locator or `nil` for your root. `query`, `limit` (the search page
+size: 10, 15 or 30), `page` and `has_more` are as in §5.1. When you define
 it, your folder views show a search glyph and the results open in their own
 view. Results are not cached and not deduped. Fill `path` on the rows you
 return, since the user did not navigate to them.
@@ -439,10 +450,11 @@ restart KOReader after editing.
 
 ### 8.5 Invalid providers
 A table that fails validation — wrong `api`, bad `id`, missing `search` or
-`resolve`, `shelves` without `browse`, api 2 without `list`, `root` without
-`list` or longer than 60 bytes, a load error in the file — is **listed
-dimmed in Sources with the reason** and logged. It never blocks the others
-and never shows a modal.
+`resolve`, `shelves` without `browse`, and for api 2: no `list`, a `root`
+that is not a string of at most 60 bytes, a `search_in` that is not a
+function, a `dedupe` that is not a boolean; a load error in the file — is
+**listed dimmed in Sources with the reason** and logged. It never blocks
+the others and never shows a modal.
 
 ## 9. What the host does with your provider
 
@@ -461,11 +473,16 @@ and never shows a modal.
 - Downloads go to `/mnt/onboard/OpenShelf/<Author> - <Title>.<format>` and
   are recorded in My books with your `id`, `name` and the locator. Files
   from folders (api 2) mirror the folders instead:
-  `OpenShelf/<name>/<path…>/<Title>.<format>`, where the path is, first
-  match wins, the file row's own `path`; else, inside a folder view, that
-  folder's `path` (or the folders the user navigated through) plus its
-  title; else none (flat, as above). Your root title is never part of it.
-  A name already taken by another file gets ` (2)`, ` (3)`…
+  `OpenShelf/<name>/<folders…>/<Title>.<format>`. A file already in My books
+  always goes back to its recorded path. Otherwise, first match wins: the
+  file row's own `path`; else, when `list` returned it, that folder's
+  directory; else flat, as above. A folder's directory is its row's `path`
+  plus its title; without `path`, the directory of the folder that listed
+  it plus its title (your root's directory is `OpenShelf/<name>/`; your root
+  title is never part of it); a folder found by search or a shelf without
+  `path` gets `OpenShelf/<name>/<title>/`. A name another My books record
+  already owns gets ` (2)`, ` (3)`…; a file with no record at the name is
+  taken to be this one and replaced on download.
 - Covers are fetched by URL in a background job and cached on disk. They must
   be reachable **without headers** in api 1 and 2.
 - **Folders (api 2)**: a `root` becomes a chip in the home *Browse* section.
@@ -520,13 +537,17 @@ for. `provider_check` runs, in order:
 10. **download** — only with `--download`: the whole file, checked for EPUB
     (zip) or PDF magic, then deleted.
 
-For an **api-2** provider a **folders** step runs after the shelves: `list`
-on your root (when you declare one) and on the first folder row found
-(search, shelves, then root), with the step-5 row checks and a JSON round
-trip of the folder locator; page 2 when page 1 says `has_more` (fails if it
-repeats a row); `search_in` once on that folder with the query, when you
-define it. Folder rows are skipped by resolve, head and cover; when search
-returned only folders, resolve uses the first file found inside one.
+For an **api-2** provider a **folders** step runs after the shelves:
+`list(…, 50, 1, ctx)` on your root (when you declare one) and on the first
+folder row found (search, shelves, then root). It fails like step 4 (an
+error, more rows than `limit`, a non-boolean `has_more`) except that an
+empty folder passes, and applies the step-5 row checks and a JSON round trip
+of the folder locator; page 2 when page 1 says `has_more` (fails if it
+repeats a row); `search_in` once on that folder with the query and
+`--limit`, when you define it. Folder rows are skipped by resolve, head and
+cover; when search returned only folders, resolve uses the first file found
+inside one, and is skipped with a warning when none was found. An api-1
+provider that returns folder rows fails step 5.
 
 Exit status: `0` on pass, `1` on any failure, `2` on a usage error.
 `--offline` stops after step 7. Your own `ctx.http` calls still go out, so
@@ -559,7 +580,9 @@ without folders would show folder rows as downloadable books (an unknown
 `action` becomes a download), so a provider that uses folders must refuse to
 load there rather than misbehave. Declare `api = 2` only if you use folders;
 an older OpenShelf then lists your source dimmed (*api must be 1*) and the
-user updates OpenShelf. Everything else in api 2 is api 1 unchanged,
+user updates OpenShelf. A new host reads the api-2 fields only from api-2
+providers, so an api-1 provider with a helper named `root` or `list` is
+unaffected. Everything else in api 2 is api 1 unchanged,
 including `browse(key, limit, ctx, page)`: `list` and `search_in` take `ctx`
 last like `search`, and `browse` stays the documented exception.
 
@@ -584,5 +607,6 @@ last like `search`, and `browse` stays the documented exception.
 - **api 2** (spec 2026-10-29, ships in v0.8.0) — api 1 + folders: `action =
   "folder"` rows via `ctx.Entry.folder` (§4.5), required `list` (§5.5),
   optional `root`, `search_in` (§5.6) and `dedupe`; optional `size` and
-  `path` on rows. A bump despite being additive, so hosts without folders
-  refuse the provider instead of showing folder rows as downloads (§11).
+  `path` on rows, all read only from api-2 providers. A bump despite being
+  additive, so hosts without folders refuse the provider instead of showing
+  folder rows as downloads (§11).

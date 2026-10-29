@@ -451,7 +451,8 @@ static list, so a provider cannot show a folder. Grilled like §9. §11 (ticket
 
 ### 12.1 Model
 A row can be a **folder**: `action = "folder"`, built with
-`ctx.Entry.folder{…}`. An optional provider function
+`ctx.Entry.folder{…}` (`ctx.Entry.new{action = "folder", …}` builds the same
+row). The api-2 provider function
 **`list(locator, limit, page, ctx) → rows, has_more`** lists one folder
 lazily, one call per folder (one GET for UCStudent). Folder rows may come
 from every function that returns rows: `search`, `browse`, `list` and
@@ -472,8 +473,12 @@ dim an api-2 provider in Sources ("api must be 1"), a clean refusal instead
 of broken rows. This is the one deliberate exception to "optional additions
 don't bump" (`PROVIDERS.md` §11): an old host would not just ignore the
 addition, it would misuse it. An api-2 provider must define `list`; `root`,
-`search_in` and `dedupe` are optional. Folder rows from an api-1 provider are
-dropped with a log line.
+`search_in` and `dedupe` are optional. Everything api 2 adds is read only
+from an api-2 provider: on api 1, `root`, `list`, `search_in` and `dedupe`
+stay unknown fields (ignored, never validated, so existing helpers with
+those names keep working), and `Catalog.stamp` drops folder rows (with a log
+line) and strips `size` and `path` from rows, so an api-1 provider behaves
+exactly as before.
 
 Argument order: `list(locator, limit, page, ctx)` and
 `search_in(locator, query, limit, page, ctx)` keep `ctx` last, like `search`.
@@ -485,8 +490,9 @@ the one documented exception, unchanged in api 2.
   returns its top level. Home gains a **Browse** section after My books and
   before the shelves: one chip per enabled, set-up source with a root,
   labelled with the root title, in source order, styled like the
-  recent-search chips. No separate toggle. Chips show offline too; a root
-  never listed asks for Wi-Fi like search does.
+  recent-search chips. No separate toggle. Chips show offline too; opening
+  a root (or any folder) that was never listed asks for Wi-Fi like search
+  does.
 - **Search and shelves** may return folder rows: searching "theoretical" can
   land in a folder directly, and a shelf may hold folder tiles (cached with
   the shelf like any row).
@@ -495,9 +501,13 @@ the one documented exception, unchanged in api 2.
 - One full-screen **view per folder**, stacked over whatever opened it (home,
   results, See all, another folder). Views below survive; a running search
   keeps going underneath, as it does under the detail page.
-- Title = folder name. **Tapping the title** opens a menu: every ancestor
-  (jump straight up) and *Refresh*. Back / chevron = up one level, X = leave
-  OpenShelf. Each Back costs one full e-ink refresh, like every view close.
+- Title = folder name. **Tapping the title** opens a menu: the folder views
+  stacked below this one, nearest last (tapping one closes every view above
+  it), then *Refresh*. A folder opened from search or a shelf has no folder
+  views below it, so its menu is just *Refresh*; the `path` titles of its row
+  are not openable and are not listed. Back / chevron = up one level, X =
+  leave OpenShelf. Each Back costs one full e-ink refresh, like every view
+  close.
 - Toolbar: `43 items · Updated 3 d ago · ⚠ 1 failed` (tap for details), a
   search glyph when the provider has `search_in`, the list/grid toggle. No
   filter: a folder has one source.
@@ -513,11 +523,13 @@ the one documented exception, unchanged in api 2.
 - **Fields**: `ctx.Entry.folder{ title, locator, cover?, subtitle?, path?,
   count?, size? }`. `path` = the ancestors' titles (`{"Software Seguro",
   "T"}`), `count` = files (shown as "N files"), `size` = bytes. File rows gain
-  optional `size` and `path` too.
+  optional `size` (summed by Download all) and `path` too. An empty `path`
+  (`{}`) means "directly under the root" and is kept, not turned into nil.
 - **Look**: the provider's cover when given, else a **folder tile**: the
   folder glyph with the title written on it, so bare shelf tiles and grid
-  cells stay readable. Second line = `subtitle`, else `path` joined with ›,
-  else nothing, never "Unknown". Meta: `UCStudent · 43 files · 120 MB` (from
+  cells stay readable. Second line = `subtitle`, else `path` joined with ›
+  (outside folder views only: inside one it would repeat the title bar on
+  every row), else nothing, never "Unknown". Meta: `UCStudent · 43 files · 120 MB` (from
   `count` / `size` when given), else `UCStudent · Folder`. No ✓.
 - **Tap opens** the folder (no detail page); **hold = Download all**. File
   rows inside folders behave like books: tap → detail, hold → download, ✓
@@ -528,7 +540,9 @@ the one documented exception, unchanged in api 2.
 - **Dedupe**: folder rows never merge (identity is `Entry.id`); rows inside
   folder views and scoped-search results are never deduped; an api-2
   provider may set `dedupe = false` so none of its rows merge (two "Aula 1"
-  files in different repositories stay two rows in search).
+  files in different repositories stay two rows in search). Folders and
+  files share the `Entry.id` space (cache keys, pager dedupe, records), so a
+  provider must keep a folder's locator identity distinct from every file's.
 
 ### 12.6 Offline-first cache
 The Kobo is offline most of the time, so folder listings are kept on disk and
@@ -540,8 +554,13 @@ The Kobo is offline most of the time, so folder listings are kept on disk and
   3 d ago" once the copy is more than 24 h old. When Wi-Fi is **already on**
   and the copy is older than 24 h it refreshes in the background and repaints
   (it never turns Wi-Fi on for that); *Refresh* in the title menu forces it.
-  A refresh refetches the pages that were cached.
-- **Only folders you opened** are cached; nothing is prefetched. A
+  A refresh refetches the pages that were cached. A folder never listed
+  asks for Wi-Fi when opened offline, like search.
+- **Only folders you opened** are cached; nothing is prefetched. *Download
+  all* on a folder counts as opening it: it reads the cached pages and
+  caches the ones it fetches. Pages per folder are not capped; the 500-folder
+  cap bounds the file for UCStudent-sized trees, and Internet Archive
+  collections (later) must revisit it. A
   downloaded file came from a folder you opened (or from search, placed by
   its own `path`), and it is also in My books and under `OpenShelf/` in
   KOReader's file manager.
@@ -556,34 +575,53 @@ The Kobo is offline most of the time, so folder listings are kept on disk and
 Optional **`search_in(locator, query, limit, page, ctx) → rows, has_more`**.
 When a provider defines it, its folder views (and its root, locator `nil`)
 show a search glyph; results open as a stacked view `“sso” in Software
-Seguro` with one provider slot and Load more, and may include folders. Not
+Seguro` with one provider slot and Load more, and may include folders.
+`limit` is the search page size (10, 15 or 30), as for `search`. Not
 cached, not added to recent searches, needs Wi-Fi.
 
 ### 12.8 Files on the device
 - **The host mirrors the browse path**:
-  `OpenShelf/<provider name>/<ancestors…>/<folder>/<Title>.<ext>`. Where a
-  file goes, first match wins:
-  1. the file row's own `path` → `OpenShelf/<provider name>/<path…>/`;
-  2. inside a folder view, that folder's directory: its row's `path` (or,
-     without one, the titles of the folder views navigated below it) plus
-     its title;
-  3. otherwise flat in `OpenShelf/`, as today.
+  `OpenShelf/<provider name>/<ancestors…>/<folder>/<Title>.<ext>`. With
+  `P` = `OpenShelf/<provider name>/`, every folder has a **directory**,
+  defined recursively:
+  - the root's directory is `P` (the root title is never a segment);
+  - a folder row with `path` → `P/<path…>/<title>`;
+  - a folder row without `path` that `list` returned → the directory of
+    the folder it was listed from, plus `<title>` (so the tree mirrors at
+    any depth, also below a folder that search found);
+  - any other folder row without `path` (search, shelf, scoped search) →
+    `P/<title>`.
 
-  The root is never a segment; every segment is made safe like a file name
-  and created recursively. The host stamps the resolved directory on the rows
-  it shows, so detail, hold and Download all agree. A provider that fills
-  `path` gets one place per file wherever the file was found; without it the
-  same file can land in two places when downloaded again from elsewhere, and
-  the record follows the newest copy.
-- **Names**: `<Title>.<ext>` inside folder directories; flat downloads keep
-  `<Author> - <Title>.<ext>`. A name already taken by another file (another
-  record's path, or a file OpenShelf has no record of) gets ` (2)`, ` (3)`…
-  The ✓ check trusts a path only when this entry's record owns it or no
-  record does. That also fixes today's hazard: two same-named files overwrite
-  each other and the never-downloaded twin shows ✓.
+  A file **without a record** goes, first match wins:
+  1. the file row's own `path` → `P/<path…>/`;
+  2. a file that `list` returned (shown in a folder view, or fetched by
+     *Download all* on that folder) → that folder's directory;
+  3. otherwise (search, shelf, scoped search, no `path`) flat in
+     `OpenShelf/`, as today.
+
+  A file **with a record** always goes to its recorded path (*Download
+  again*, hold, Download all), wherever it was found; 1–3 apply only when
+  there is no record. A file therefore has one place while it is in My
+  books; without `path`, where it first lands depends on where it was found.
+
+  Every segment is made safe like a file name; a segment that ends up empty
+  (`.`, `..`) becomes `_`. Directories are created recursively. The host
+  stamps the resolved directory on the rows it shows (folder rows included),
+  so detail, hold and Download all agree.
+- **Names**: `<Title>.<ext>` inside folder directories (a title that already
+  ends in `.<ext>`, any case, is not extended again: "Aula 1.pdf" stays
+  `Aula 1.pdf`); flat downloads keep `<Author> - <Title>.<ext>`. An entry's
+  **target** is its recorded path when it has a record; otherwise the first
+  of `Name`, `Name (2)`, `Name (3)`… that no other entry's record owns. ✓ =
+  a file exists at the target, and a download writes the target, replacing
+  whatever is there. A file OpenShelf has no record of thus counts as this
+  entry's own copy when it sits at the entry's target (✓, *Open*, *Download
+  again* replaces it); ` (2)` appears only when another record owns the
+  name. That fixes today's hazard: two same-named files overwrite each other
+  and the never-downloaded twin shows ✓.
 - **My books** records these files like books (record + KOReader Collection
-  "OpenShelf"); the record's path keeps the folder directory and *Download
-  again* reuses it. Folder rows are never recorded.
+  "OpenShelf"); the record keeps the full path, folder directory included.
+  Folder rows are never recorded.
 - **Download all** (footer button, or hold on a folder row anywhere): the
   files directly in that folder, not its subfolders. Fetches the remaining
   pages first, skips files already on the device and buy rows, confirms
@@ -601,9 +639,14 @@ cached, not added to recent searches, needs Wi-Fi.
   `examples/folders_demo.lua` (api 2: a root, a small nested fake tree,
   `search_in`) is the reference and feeds the emulator check.
 - `tools/provider_check.lua`, for api 2: lists the root (if declared) and
-  the first folder row found, runs the row checks and JSON round trip on
-  what comes back, page 2 when `has_more`, `search_in` once when defined, and
-  resolves the first file found inside when search returned none.
+  the first folder row found with `list(…, 50, 1, ctx)`, under the search
+  step's failure rules (error, more rows than `limit`, non-boolean
+  `has_more`; an empty folder passes), runs the row checks and JSON round
+  trip on what comes back, page 2 when `has_more` (fails on a repeated row),
+  `search_in` once when defined (search page size), and resolves the first
+  file found inside when search returned none (skipped with a warning when
+  no file is found anywhere). An api-1 provider that returns folder rows
+  fails the row step.
 - Unit tests for the pure parts: folder rows and stamping, api-2 validation,
   dedupe / filter / group rules, directory and name building with the
   collision suffix, the folder cache (keys, eviction, settings clear).
@@ -616,34 +659,41 @@ cached, not added to recent searches, needs Wi-Fi.
 ### 12.10 Host notes (from the seam survey)
 Today every row is assumed to be a file. Places that need folder handling:
 the `Entry.ACTION*` tables plus a folder glyph that exists in the bundled
-`symbols.ttf`; `Catalog.validate` (api 2, `list` / `search_in` functions,
-`root` string, `dedupe` boolean); `Catalog.stamp` (drop folder rows from
-api-1 providers); `Catalog.group` (actions missing from `ACTION_ORDER`
-vanish silently, so "folder" goes first in it); `Results.flatten` and
+`symbols.ttf`; `Catalog.validate` (api 2 only: `list` / `search_in`
+functions, `root` string, `dedupe` boolean; api 1 never looks at them);
+`Catalog.stamp` (for api-1 providers drop folder rows and strip `size` /
+`path`; it also re-runs `Entry.new` on rows without a `dedup_key`, so folder
+rows must survive that, either with a key or by `Entry.new` dispatching
+`action = "folder"` to `Entry.folder`); `Catalog.group` (actions missing
+from `ACTION_ORDER` vanish silently, so "folder" goes first in it, and
+`Entry.new`'s `ACTION_SET` is built from the same list); `Results.flatten` and
 `Dedupe` exemptions; one tap dispatcher (`App.openEntry`) for results, lists,
 shelves and My books; folder guards in `App.holdDownload`,
 `Downloader.enqueue` and `DetailView`; no `App.bookStatus` for folder rows;
 `Downloader.targetPath` gains the directory, the name rule and the suffix
 (recursive `util.makePath`). List, detail and My books set `on_left =
 close` directly, so overriding `onBack` alone does not change the chevron.
-New modules get `openshelf_` names (`cache` is KOReader's).
+An entry's `path` (a list of folder titles) is not the library record's
+`path` (the absolute file path, also in `App.bookStatus()`): `Library.add` /
+`toEntry` must keep the two apart. New modules get `openshelf_` names
+(`cache` is KOReader's).
 
 | # | Decision |
 |---|----------|
-| 68 | Folders are rows: `action = "folder"` via `ctx.Entry.folder`, listed lazily by optional `list(locator, limit, page, ctx) → rows, has_more`; folder rows may come from search, browse, list and search_in. Rejected: path-tagged files with a host-built tree, dynamic shelves |
-| 69 | api 2 = api 1 + folders. Hosts accept 1 and 2; old hosts dim api-2 providers instead of showing folder rows as downloads. api 2 requires `list`; `root`, `search_in`, `dedupe` optional; folder rows from api-1 providers are dropped. The one exception to "optional additions don't bump" |
+| 68 | Folders are rows: `action = "folder"` via `ctx.Entry.folder`, listed lazily by the api-2 function `list(locator, limit, page, ctx) → rows, has_more`; folder rows may come from search, browse, list and search_in. Rejected: path-tagged files with a host-built tree, dynamic shelves |
+| 69 | api 2 = api 1 + folders. Hosts accept 1 and 2; old hosts dim api-2 providers instead of showing folder rows as downloads. api 2 requires `list`; `root`, `search_in`, `dedupe` optional. On api 1 those fields stay unknown (never read or validated), folder rows are dropped and `size` / `path` stripped. The one exception to "optional additions don't bump" |
 | 70 | `list(locator, limit, page, ctx)` and `search_in(locator, query, limit, page, ctx)` keep ctx last like search; `browse(key, limit, ctx, page)` (decision 64) stays the documented exception in both api versions |
 | 71 | `root = "<title>"` + `list(nil, …)` = a provider's top level. Home *Browse* section after My books, before shelves: one chip per enabled, set-up source with a root, in source order; no toggle; shown offline |
 | 72 | One stacked view per folder over whatever opened it; views below survive; title = folder name, title tap = ancestors menu + Refresh; Back = up one level, X = leave OpenShelf |
 | 73 | The folder view is §11's paged list fed by `list`: 50 rows per page, Load more; toolbar `N items · Updated … · ⚠ failed`, search glyph (with `search_in`), list/grid, no filter; footer Load more + Download all |
-| 74 | Folder rows: optional cover, `subtitle`, `path`, `count`, `size`; a folder tile with glyph + title when there is no cover; second line subtitle, else path, never "Unknown"; meta `Source · N files · size` or `Source · Folder`; tap opens, hold = Download all, no detail page, no ✓. File rows gain optional `size` and `path` |
+| 74 | Folder rows: optional cover, `subtitle`, `path`, `count`, `size`; a folder tile with glyph + title when there is no cover; second line subtitle, else path (outside folder views), never "Unknown"; meta `Source · N files · size` or `Source · Folder`; tap opens, hold = Download all, no detail page, no ✓. File rows gain optional `size` and `path` |
 | 75 | Folders group first ("Folders" header when mixed), pass any format filter, obey the source filter and never merge; folder views and scoped results are never deduped; provider `dedupe = false` keeps all its rows unmerged |
 | 76 | Offline-first folder cache `openshelf_folders.json`: every loaded page, never expires; background refresh only when Wi-Fi is already on and the copy is > 24 h old; title-menu Refresh; "Updated N d ago" |
 | 77 | Only opened folders are cached, no prefetch; a provider's settings change clears its folders; cap 500 folders, least recently opened dropped. Shelves documented the same way (data kept, 24 h = refresh age) |
 | 78 | Scoped search: optional `search_in`; a search glyph in that provider's folder views and root; results in a stacked view with Load more; not cached, not in recents |
-| 79 | Disk mirrors the browse path, `OpenShelf/<provider name>/<ancestors…>/<folder>/`; precedence: the file's `path` → the folder view's directory (folder `path` or navigated titles, plus its title) → flat; the root is not a segment; the host stamps the directory on shown rows |
-| 80 | Names: `<Title>.<ext>` inside folder directories, `<Author> - <Title>.<ext>` flat; a taken name gets ` (2)`…; ✓ only from a path this entry's record owns or no record owns |
-| 81 | Files from folders are recorded in My books like books (record + Collection); *Download again* reuses the recorded path; folder rows are never recorded |
+| 79 | Disk mirrors the browse path, `OpenShelf/<provider name>/<ancestors…>/<folder>/`. A folder's directory is recursive: `path` + title, else (listed by `list`) its parent folder's directory + title, else `<provider name>/<title>`; the root is not a segment. A file without a record: its `path` → the directory of the folder that listed it → flat. A file with a record always uses its recorded path. The host stamps directories on shown rows |
+| 80 | Names: `<Title>.<ext>` inside folder directories (no doubled extension), `<Author> - <Title>.<ext>` flat. Target = the recorded path, else the first of `Name`, `Name (2)`… no other record owns; ✓ = a file at the target; a download replaces it. An unrecorded file at the target is this entry's copy |
+| 81 | Files from folders are recorded in My books like books (record + Collection), with their full path; folder rows are never recorded |
 | 82 | Download all: one folder, no recursion; footer button and hold on a folder row; fetches remaining pages, skips on-device files and buy rows, confirms with count (+ size), queues; *Cancel downloads* while queued |
 | 83 | Empty folder → "This folder is empty."; failure → cached rows + strip error, else message + Retry; `list` / `search_in` under the 60 s deadline |
 | 84 | Shelves may hold folder rows: cached with the shelf, drawn as titled folder tiles, tap opens |
