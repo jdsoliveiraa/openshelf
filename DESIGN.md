@@ -2,7 +2,7 @@
 
 > Outcome of a grilling session on 2026-10-26. Thirty-six decisions, every branch
 > visited, nothing silently assumed. §9 adds decisions 37–57 (modular
-> providers, a second session the same day; contract in `PROVIDERS.md`). **Don't relitigate without a reason**; if
+> providers, a second session the same day; contract in `PROVIDERS.md`); §10 adds 58–63 (self-update). **Don't relitigate without a reason**; if
 > something here turns out to be wrong on-device, change it and note why.
 > Device facts (Kobo Clara HD, 1072×1448 @ 300 dpi, e-ink) live in
 > `TODO_CLARA_HD.md`. Project constraints live in `CLAUDE.md`.
@@ -405,3 +405,19 @@ it); a template `provider-openshelf-template.koplugin` that `scripts/emu.sh`
 also symlinks so a walkthrough exercises the external path; one example
 drop-in file. **One release, v0.6.0.** The spec is written and reviewed
 before code; the KOReader PR is opened only on explicit go.
+
+## 10. Self-update (ticket #6, 2026-10-29)
+
+| # | Decision |
+|---|----------|
+| 58 | OpenShelf updates itself from the latest non-prerelease GitHub Release (`/releases/latest`, anonymous); tag `vX.Y.Z` compared numerically with `openshelf_version.lua`; suffixed or malformed tags ignored |
+| 59 | Settings → Updates: *Check for updates* (always reports) and *Check for updates automatically* (default on): at most once per 24 h, in the background when OpenShelf opens, only when already connected, silent unless an update is offered |
+| 60 | Offer = current → new + start of the release notes, *Update* / *Later*; *Later* mutes that version for automatic checks until a manual check or a newer release |
+| 61 | Install never trusts the download: https only (API, assets, every redirect; plain http only to localhost via the dev override), zip size vs the asset, SHA-256 vs `openshelf-vX.Y.Z.zip.sha256` (a release without it is refused), the file must start with the zip signature `PK\3\4`, every zip entry must be a file/dir under `openshelf.koplugin/`, staged plugin needs `_meta.lua`, `main.lua` and version == tag. Download/verify/extract run in a job (300 s deadline) into `<plugin>.staging`; `sync` before the swap |
+| 62 | Swap = `<plugin>.old` (one backup, replaced each time) ← live, live ← staged; a failed second rename renames live back. Then KOReader's restart prompt; new code loads only after restart. Only the plugin folder and its two siblings are written; settings, drop-in providers and books are never touched |
+| 63 | A symlinked plugin folder (the emulator's dev checkout) is never updated; dev overrides `OPENSHELF_FAKE_VERSION`, `OPENSHELF_UPDATE_API`, `OPENSHELF_UPDATE_PLUGIN_DIR` exist for emulator tests only |
+
+Pure logic lives in `openshelf_updater_logic.lua` (unit-tested); the
+KOReader side is `openshelf_updater.lua`. Until the restart, modules OpenShelf
+requires lazily would load from the new files beside old ones already in
+memory — hence the immediate restart prompt.

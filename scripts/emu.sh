@@ -12,12 +12,16 @@
 #   scripts/emu.sh --no-autoopen       # start in KOReader's file manager (tests the home-mode *setting*)
 #   scripts/emu.sh --template          # also load provider-openshelf-template.koplugin (external provider path);
 #                                      # without the flag a previously linked template is unlinked
+#   scripts/emu.sh --home DIR --copy   # another KO_HOME holding a real *copy* of the plugin (updater tests:
+#                                      # the self-updater refuses a symlinked plugin and must never touch the
+#                                      # checkout). --copy refreshes the copy; without it an existing copy in
+#                                      # DIR is kept as-is (e.g. what an in-app update installed).
 # Env: OPENSHELF_INLINE_JOBS=1|0 forces inline/forked background jobs (macOS defaults to inline).
 set -euo pipefail
 HERE="$(cd "$(dirname "$0")/.." && pwd)"
 KOREADER="${KOREADER_SRC:-$HERE/../koreader}"
 KOHOME="$HERE/.kohome"
-WALK=""; SHOTS=""; AUTOOPEN=1; TEMPLATE=""; GEOM=(-W 536 -H 724 -D 150)   # half-scale Clara: same proportions, fits a laptop screen
+WALK=""; SHOTS=""; AUTOOPEN=1; TEMPLATE=""; COPY=""; GEOM=(-W 536 -H 724 -D 150)   # half-scale Clara: same proportions, fits a laptop screen
 while [ $# -gt 0 ]; do
   case "$1" in
     --walk) WALK="$(cd "$(dirname "$2")" && pwd)/$(basename "$2")"; shift 2 ;;
@@ -25,12 +29,23 @@ while [ $# -gt 0 ]; do
     --clara) GEOM=(-s kobo-clara); shift ;;
     --no-autoopen) AUTOOPEN=""; shift ;;
     --template) TEMPLATE=1; shift ;;
+    --home) mkdir -p "$2"; KOHOME="$(cd "$2" && pwd)"; shift 2 ;;
+    --copy) COPY=1; shift ;;
     *) echo "unknown option $1" >&2; exit 2 ;;
   esac
 done
 [ -x "$KOREADER/kodev" ] || { echo "KOReader source not found at $KOREADER (set KOREADER_SRC)" >&2; exit 1; }
 mkdir -p "$KOHOME/plugins"
-ln -sfn "$HERE/openshelf.koplugin" "$KOHOME/plugins/openshelf.koplugin"
+PLUG="$KOHOME/plugins/openshelf.koplugin"
+if [ -n "$COPY" ]; then
+  [ "$KOHOME" != "$HERE/.kohome" ] || { echo "--copy needs --home (keep .kohome symlinked)" >&2; exit 2; }
+  if [ -L "$PLUG" ]; then rm "$PLUG"; elif [ -d "$PLUG" ]; then rm -rf "$PLUG"; fi
+  cp -R "$HERE/openshelf.koplugin" "$PLUG"
+elif [ ! -d "$PLUG" ] || [ -L "$PLUG" ]; then
+  ln -sfn "$HERE/openshelf.koplugin" "$PLUG"
+fi
+# a fresh home would boot into KOReader's quickstart guide (CLAUDE.md "Emulator")
+[ -f "$KOHOME/settings.reader.lua" ] || echo 'return { ["quickstart_shown_version"] = 999999999999 }' > "$KOHOME/settings.reader.lua"
 TPL="$KOHOME/plugins/provider-openshelf-template.koplugin"
 if [ -n "$TEMPLATE" ]; then
   ln -sfn "$HERE/provider-openshelf-template.koplugin" "$TPL"

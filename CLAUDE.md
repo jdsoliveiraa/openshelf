@@ -20,6 +20,8 @@ for f in openshelf.koplugin/*.lua openshelf.koplugin/*/*.lua provider-openshelf-
 scripts/emu.sh                               # emulator, opens straight into OpenShelf
 scripts/emu.sh --walk tools/emu-walkthrough.lua --shots /tmp/shots   # scripted walkthrough + PNGs
 scripts/emu.sh --no-autoopen --walk tools/emu-walkthrough-3.lua --shots /tmp/shots   # home mode (needs OPENSHELF_TEST_EPUB)
+tools/emu-update-serve.sh /tmp/osu &   # fake releases; then the self-updater check on a *copied* plugin (header of tools/emu-update-check.lua)
+OPENSHELF_UPDATE_BASE=http://127.0.0.1:8765 scripts/emu.sh --home /tmp/osu-home --copy --walk tools/emu-update-check.lua --shots /tmp/shots
 ```
 
 Everything runs under LuaJIT (the device runtime). One-time setup:
@@ -86,10 +88,10 @@ proportions, fits a laptop). `--clara` gives the exact 1072×1448.
   against the rows they built (`view_base.lua`), so every row needs an exact
   height.
 - **KOReader UI modules cannot run locally.** `view_*`, `uiparts`, `covers`,
-  `downloader`, `jobs`, `settings`, `collection`, `app` are only verified in the
-  emulator / on-device. Keep `entry`, `results`, `layout`, `library`, `ttlcache`,
-  `catalog`, providers and parsers free of KOReader dependencies so the tests can
-  load them.
+  `downloader`, `jobs`, `settings`, `collection`, `app`, `openshelf_updater` are
+  only verified in the emulator / on-device. Keep `entry`, `results`, `layout`,
+  `library`, `ttlcache`, `catalog`, `openshelf_updater_logic`, providers and
+  parsers free of KOReader dependencies so the tests can load them.
 - **HTTP:** go through `http_util.lua` (socketutil timeouts + timeout-aware sinks).
   Never scrape Standard Ebooks (honeypot links ban the home IP). DOAB 403s from
   datacenter IPs — that failure is expected off-device.
@@ -108,6 +110,16 @@ device (Exit → Restart KOReader). USB fallback per `TODO_CLARA_HD.md` §5 — 
 `scripts/deploy-launcher.sh` installs the Kobo launcher (`kobo/`: KFMon watch +
 script + icon, listed by NickelMenu's kfmon generator); KFMon only reads it
 after a reboot.
+
+**Self-update** (from the version after v0.6.1): OpenShelf settings → *Check
+for updates* (plus a daily automatic check) installs the latest GitHub Release
+on the device — no Mac needed. It downloads `openshelf-vX.Y.Z.zip` + `.sha256`
+(published by `release.yml`), verifies, extracts beside the plugin, swaps
+folders (one `openshelf.koplugin.old` backup) and offers a KOReader restart
+(`openshelf_updater.lua`, DESIGN.md §10). `deploy.sh` remains the path for dev
+builds and for installing the first updater-capable version. It refuses a
+symlinked plugin folder, so the emulator's linked checkout is never replaced;
+test it with `scripts/emu.sh --home DIR --copy` (Commands above).
 
 ## Workflow
 

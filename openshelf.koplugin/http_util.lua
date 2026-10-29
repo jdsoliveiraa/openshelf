@@ -52,7 +52,9 @@ local function authority(url)
     return (u.host or ""):lower() .. ":" .. tostring(port)
 end
 
--- One request with manual redirects. `make_sink()` gives a fresh sink per hop
+-- One request with manual redirects. opts.allow_url(url) -> bool, when
+-- given, vets every redirect target (the self-updater's https-only rule);
+-- callers that don't pass it behave exactly as before. `make_sink()` gives a fresh sink per hop
 -- (a redirect's small body lands in it and is thrown away by the caller's
 -- next sink). Returns code, headers, status like socket.skip(1, request()).
 local function request(method, url, opts, make_sink)
@@ -69,6 +71,9 @@ local function request(method, url, opts, make_sink)
         local location = REDIRECT[code] and type(resp_headers) == "table" and resp_headers.location
         if not location then return code, resp_headers, status end
         url = socket_url.absolute(url, location)
+        if opts.allow_url and not opts.allow_url(url) then
+            return nil, nil, "redirect to a disallowed URL refused: " .. tostring(url)
+        end
         if authority(url) ~= origin then headers = headers_for({}) end
     end
     return nil, nil, "too many redirects"

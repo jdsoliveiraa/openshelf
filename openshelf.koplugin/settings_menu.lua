@@ -1,6 +1,6 @@
 --[[
-Settings behind the gear (DESIGN.md §2.6, §8): sources, default results view,
-results per source, clear recent searches, home mode, About. A stock KOReader Menu;
+Settings behind the gear (DESIGN.md §2.6, §8, §10): sources, default results
+view, results per source, clear recent searches, home mode, updates, About. A stock KOReader Menu;
 the right column shows the current value.
 --]]
 local ConfirmBox = require("ui/widget/confirmbox")
@@ -120,6 +120,20 @@ function SettingsMenu.show(opts)
             mandatory = Settings.homeMode() and Glyphs.check or "",
             callback = function()
                 Settings.setHomeMode(not Settings.homeMode())
+                refresh()
+            end,
+        }
+        t[#t + 1] = { text = _("Updates"), dim = true, select_enabled = false }
+        t[#t + 1] = {
+            text = "      " .. _("Check for updates"),
+            mandatory = require("openshelf_updater").runningVersion(),
+            callback = function() require("openshelf_updater").check{ manual = true } end,
+        }
+        t[#t + 1] = {
+            text = "      " .. _("Check for updates automatically"),
+            mandatory = Settings.updateState().auto and Glyphs.check or "",
+            callback = function()
+                Settings.setUpdateAuto(not Settings.updateState().auto)
                 refresh()
             end,
         }

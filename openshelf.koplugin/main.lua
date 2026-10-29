@@ -82,6 +82,9 @@ function OpenShelf:onOpenShelfOpen()
     require("openshelf_external").open()
     local HomeView = require("view_home")
     UIManager:show(HomeView:new{ ui = self.ui })
+    -- Self-update (DESIGN.md §10): at most once per 24 h, in the background,
+    -- silent unless a newer release is offered. After home has painted.
+    UIManager:scheduleIn(3, function() require("openshelf_updater").autoCheck() end)
     return true
 end
 
