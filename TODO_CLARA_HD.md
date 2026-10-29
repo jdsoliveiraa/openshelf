@@ -190,14 +190,17 @@ data with a `locator`; search/covers/downloads run in forked subprocesses
 cache; Internet Archive excludes borrow-only items and sorts by downloads.
 Emulator workflow: `scripts/emu.sh` (+ `tools/emu-walkthrough*.lua`).
 
+**Built (v0.6.0, 2026-10-29; on-device verification pending): modular providers**
+— contract in `PROVIDERS.md` (api 1), host design in `DESIGN.md` §9 (decisions
+37–57). Three ways in: in-tree, `provider-openshelf-*.koplugin` via KOReader's
+core `Provider` registry, drop-in files under `<settings>/openshelf/providers/`.
+Stable provider `id`s + one-time library migration, `ctx`-based API, per-source
+settings/`check`, arrangeable source order, 60 s job deadline, borrow/buy rows,
+shelves from any provider, dev kit (provider check tool, template plugin, example
+drop-in). Tickets #1–#9 landed via PRs #13, #16, #17. Still to verify on the Kobo:
+the subprocess deadline, external plugin loading, migration of a real v0.5 library.
+
 **Next:**
-- [ ] **v0.6 modular providers** — contract in `PROVIDERS.md` (api 1), host
-      design in `DESIGN.md` §9 (decisions 37–57, grilled 2026-10-26). Three ways
-      in: in-tree, `provider-openshelf-*.koplugin` via KOReader's core `Provider`
-      registry, drop-in files under `<settings>/openshelf/providers/`. Stable
-      provider `id`s + one-time library migration, `ctx`-based API, per-source
-      settings/`check`, arrangeable source order, 60 s job deadline, borrow/buy
-      rows. Spec written first; build + single release follow.
 - [ ] **Standard Ebooks via authenticated OPDS** (opt-in; user pastes a patron
       token in Sources). `opds.lua` parser is ready; build it as the first
       provider on `PROVIDERS.md` (secret `token` field + `check`). **Do NOT

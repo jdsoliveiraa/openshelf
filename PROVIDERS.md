@@ -1,9 +1,8 @@
 # OpenShelf provider contract — api 1
 
 > Normative spec for provider authors. Design record and host-side plan:
-> `DESIGN.md` §9 (decisions 37–57, grilled 2026-10-26). Status: **specified,
-> not yet implemented** — target release v0.6.0. Until then the built-ins
-> still use the v0.5 shape (`providers_*.lua`).
+> `DESIGN.md` §9 (decisions 37–57, grilled 2026-10-26). Status: **implemented**
+> as of v0.6.0 — the built-ins and the host both use api 1.
 
 A **provider** turns one catalog into OpenShelf search results and download
 URLs. Project Gutenberg, Internet Archive and DOAB are providers; so is
@@ -451,4 +450,4 @@ changelog lives at the bottom of this file.
 ---
 
 ### Changelog
-- **api 1** (spec 2026-10-26, target v0.6.0) — initial contract.
+- **api 1** (spec 2026-10-26, shipped in v0.6.0) — initial contract.
