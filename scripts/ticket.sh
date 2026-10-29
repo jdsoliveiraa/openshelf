@@ -25,7 +25,16 @@ need_n() { case "${1:-}" in ''|*[!0-9]*) die "ticket number required";; esac; }
 num() { echo $((10#$1)); }   # "08" -> 8 (printf %02d reads a leading 0 as octal)
 
 issue_title() { gh issue view "$1" --repo "$REPO" --json title --jq .title; }
-slug() { printf '%s' "$1" | tr '[:upper:]' '[:lower:]' | sed -E 's/[^a-z0-9]+/-/g; s/^-+//; s/-+$//' | cut -c1-32 | sed -E 's/-+$//'; }
+slug() {  # lowercase, dashes, at most 32 chars, cut at a word boundary
+  local s; s="$(printf '%s' "$1" | tr '[:upper:]' '[:lower:]' | sed -E 's/[^a-z0-9]+/-/g; s/^-+//; s/-+$//')"
+  if [ "${#s}" -gt 32 ]; then
+    local cut; cut="$(printf '%s' "$s" | cut -c1-33)"; cut="${cut%-*}"
+    # no dash to cut at, or the word cut leaves almost nothing: hard cut at 32
+    if [ "${#cut}" -gt 32 ] || [ "${#cut}" -lt 12 ]; then cut="$(printf '%s' "$s" | cut -c1-32)"; fi
+    s="${cut%-}"
+  fi
+  printf '%s' "$s"
+}
 branch_for() {  # existing local or remote branch ticket/<nn>-*, else a new name
   local nn; nn="$(printf '%02d' "$1")"
   local b; b="$(git for-each-ref --format='%(refname:short)' "refs/heads/ticket/$nn-*" "refs/remotes/origin/ticket/$nn-*" | sed 's#^origin/##' | head -1)"
@@ -112,13 +121,14 @@ cmd_land() {
   git fetch -q origin main "$b"
   if ! git merge-base --is-ancestor origin/main "origin/$b"; then
     wt="$(worktree_of "$b")"; [ -n "$wt" ] || die "$b is behind main and has no local worktree; run start or check it out"
-    [ -z "$(git -C "$wt" status --porcelain)" ] || die "$wt is dirty"
+    [ -z "$(git -C "$wt" status --porcelain --untracked-files=no)" ] || die "$wt has uncommitted changes"
     git -C "$wt" rebase -q origin/main || die "rebase conflicts in $wt; resolve, push, re-review, land again"
     git -C "$wt" push -q --force-with-lease origin "$b"
     echo "ticket: rebased $b onto main and pushed. Wait for CI, review the new head, then land again." >&2
     exit 3
   fi
   sha="$(gh pr view "$pr" --repo "$REPO" --json headRefOid --jq .headRefOid)"
+  [ "$(review_state "$sha")" != failure ] || die "review-agent failed on head ${sha:0:7}: send the findings back to the implementer (fix loop)"
   local rc=0; gh pr checks "$pr" --repo "$REPO" --watch --fail-fast >/dev/null || rc=$?
   [ "$rc" = 0 ] || die "checks not green on PR #$pr (gh pr checks $pr)"
   [ "$(review_state "$sha")" = success ] || die "no passing $REVIEW_CONTEXT status on head ${sha:0:7}"

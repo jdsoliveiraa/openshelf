@@ -61,6 +61,10 @@ only**, head branches deleted on merge.
 
 `scripts/ticket.sh status <n>` shows PR, CI and review state at any time.
 
+Verified end to end on 2026-10-29 with throwaway ticket #14: start, pr, a
+failing review that blocked land, land's rebase branch, a passing review,
+squash-merge, issue closed, worktree and branch removed.
+
 ## Non-ticket changes
 
 Same flow without an issue number: a branch (`chore/<slug>`, `fix/<slug>`)
