@@ -20,7 +20,17 @@ local P = {
 }
 
 local BASE = "https://gutendex.com/books/"
-local SHELF_QUERY = { popular = "?sort=popular", new = "?sort=descending" }
+local SHELF_QUERY = { popular = "sort=popular", new = "sort=descending" }
+
+-- Gutendex is fast only on URLs it has cached and can take a minute on
+-- others (2026-10-29: "?sort=popular" 0.06 s, "?sort=popular&page=2" 98 s,
+-- "?page=2&sort=popular" 15 s cold, then cached). So page 1 keeps the plain
+-- shelf URL and later pages use the exact shape of Gutendex's own `next`
+-- links, which every client following them warms.
+local function shelf_url(q, n)
+    if n == 1 then return BASE .. "?" .. q end
+    return BASE .. "?page=" .. n .. "&" .. q
+end
 
 local function first(t)
     return type(t) == "table" and t[1] or nil
@@ -50,9 +60,10 @@ function P.parse(data, limit, ctx)
     return results, has_more
 end
 
--- Gutendex serves a fixed 32 rows per page; OpenShelf pages by `limit`
--- (10, 15 or 30). OpenShelf page N is result offsets [(N-1)*limit, N*limit),
--- so it spans one or two Gutendex pages; fetch those and slice.
+-- Gutendex serves a fixed 32 rows per page; search pages by `limit`
+-- (10, 15 or 30). OpenShelf search page N is result offsets
+-- [(N-1)*limit, N*limit), so it spans one or two Gutendex pages; fetch
+-- those and slice. (Shelves page one Gutendex page at a time: P.browse.)
 local GUTENDEX_PAGE = 32
 
 --- Rows of OpenShelf page `page` from `fetch(gutendex_page) → data, err`.
@@ -87,13 +98,15 @@ function P.search(query, limit, page, ctx)
     return entries, has_more
 end
 
-function P.browse(key, limit, ctx)
+-- Shelves (PROVIDERS.md §5.3): shelf page N is exactly Gutendex page N, one
+-- request, every EPUB row in it (the host's browse page size is 32, one
+-- Gutendex page); has_more from Gutendex's `next`.
+function P.browse(key, limit, ctx, page)
     local q = SHELF_QUERY[key]
     if not q then return nil, "unknown shelf: " .. tostring(key) end
-    local data, err = ctx.http.getJSON(BASE .. q)
+    local data, err = ctx.http.getJSON(shelf_url(q, page or 1))
     if not data then return nil, err end
-    local entries = P.parse(data, limit or 12, ctx)
-    return entries
+    return P.parse(data, limit or GUTENDEX_PAGE, ctx)
 end
 
 function P.resolve(locator)

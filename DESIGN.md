@@ -421,3 +421,15 @@ Pure logic lives in `openshelf_updater_logic.lua` (unit-tested); the
 KOReader side is `openshelf_updater.lua`. Until the restart, modules OpenShelf
 requires lazily would load from the new files beside old ones already in
 memory — hence the immediate restart prompt.
+
+## 11. Shelves: See all pages with Load more (ticket #12, 2026-10-29)
+
+| # | Decision |
+|---|----------|
+| 64 | `browse(key, limit, ctx, page) → entries, has_more` (PROVIDERS.md §5.3), additive in api 1: `page` optional (absent = 1); only a second return of exactly `true` is `has_more`, so a provider that ignores `page` is a single-page shelf with no Load more. The host asks for page N+1 only after page N said `has_more` |
+| 65 | Every browse call uses the browse page size (32, one Gutendex page) as `limit`, for the home shelf fetch and every Load more page, so page 1 is the cached home shelf; the home row still shows only the covers that fit. The 24 h cache stores page 1 with its `has_more` and the page size it was fetched at (`{ entries, has_more, size }`); a cache at another size (or without one) or a pre-#12 bare list reads as stale and is refreshed. Home row layout and the TTL are unchanged |
+| 66 | See all opens instantly on the cached page 1 and ends in Load more like search results: the next page is fetched in a job under the 60 s deadline and appended, skipping rows already shown. While it runs the button reads "Loading…"; a failure shows "⚠ Load more failed" in the status strip (tap for the reason) and Load more stays to retry. The view lands on the page holding the first new book: refreshed in place ("ui") when the last page had room, otherwise turned to the next page ("partial") |
+| 67 | Gutenberg shelf page N is exactly Gutendex page N: one request, every EPUB row in it (up to `limit`), `has_more` from Gutendex's `next`; Popular gets about 30 per page, New about 12–20 (its newest books often have no EPUB yet). Page 1 keeps the plain `?sort=…` URL and later pages use Gutendex's own `next`-link shape (`?page=N&sort=…`): those are the URLs its CDN has cached, and uncached ones can take a minute |
+
+The paging state (`shelf_pager.lua`) and the provider side are pure and
+unit-tested; the list view (`view_list.lua`) is verified in the emulator.

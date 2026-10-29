@@ -14,7 +14,7 @@ Flags:
 
 Steps: load + Catalog.validate → required settings → check(ctx) → search →
 plain-data walk + JSON round trip of every row → usable locators →
-browse every shelf → resolve the first non-buy row (from its round-tripped
+browse every shelf (page 2 too when page 1 says has_more) → resolve the first non-buy row (from its round-tripped
 locator, as a fresh process would) → HEAD with the resolved headers → cover
 reachable without headers → optional download. Exit status 1 on any failure.
 
@@ -72,7 +72,7 @@ local Check = {}
 
 Check.DEFAULT_QUERY = "pride and prejudice"
 Check.DEFAULT_LIMIT = 10
-Check.SHELF_LIMIT = 12   -- browse.lua's SHELF_SIZE
+Check.SHELF_LIMIT = 32   -- browse page size: browse.lua's PAGE_SIZE
 
 Check.USAGE = [==[usage: luajit tools/provider_check.lua <provider.lua> ["query"] [--set key=value]... [--limit N] [--download] [--offline]==]
 
@@ -272,14 +272,41 @@ function Check.run(opts)
         out(("      %d. [%s] %s — %s (%s)"):format(i, r.action, r.title, r.author, r.format))
     end
 
-    -- 5. shelves
+    -- 5. shelves: page 1, and page 2 when page 1 says has_more (PROVIDERS.md §5.3)
+    local function browse_page(shelf, page)
+        local step = "shelf " .. shelf.key .. (page > 1 and (" p" .. page) or "")
+        local okb, srows, more = pcall(p.browse, shelf.key, Check.SHELF_LIMIT, ctx, page)
+        if not okb then fail(step, "raised: " .. tostring(srows)); return nil end
+        if type(srows) ~= "table" then fail(step, more or "browse returned nothing"); return nil end
+        if #srows == 0 then fail(step, "empty shelf"); return nil end
+        if #srows > Check.SHELF_LIMIT then
+            fail(step, ("%d rows for limit %d"):format(#srows, Check.SHELF_LIMIT)); return nil
+        end
+        -- absent = a single-page shelf (pre-#12 providers); anything else must be a boolean
+        if more ~= nil and type(more) ~= "boolean" then
+            fail(step, "has_more must be a boolean or absent (got " .. type(more) .. ")"); return nil
+        end
+        out(("      page %d: %d row(s), has_more=%s"):format(page, #srows, tostring(more == true)))
+        check_rows(step, srows)
+        return srows, more == true
+    end
     for __, shelf in ipairs(p.shelves or {}) do
-        local okb, srows, berr = pcall(p.browse, shelf.key, Check.SHELF_LIMIT, ctx)
-        local step = "shelf " .. shelf.key
-        if not okb then fail(step, "raised: " .. tostring(srows))
-        elseif type(srows) ~= "table" then fail(step, berr or "browse returned nothing")
-        elseif #srows == 0 then fail(step, "empty shelf")
-        else check_rows(step, srows) end
+        local page1, more = browse_page(shelf, 1)
+        if page1 and more then
+            local page2 = browse_page(shelf, 2)
+            if page2 then
+                local shown, repeats = {}, 0
+                for ___, r in ipairs(page1) do shown[Entry.locatorKey(r.locator)] = true end
+                for ___, r in ipairs(page2) do
+                    if shown[Entry.locatorKey(r.locator)] then repeats = repeats + 1 end
+                end
+                if repeats > 0 then
+                    fail("shelf " .. shelf.key .. " p2", ("repeats %d row(s) of page 1 (is `page` ignored?)"):format(repeats))
+                else
+                    pass("shelf " .. shelf.key .. " p2", "no row repeated from page 1")
+                end
+            end
+        end
     end
 
     -- 6. resolve the first row that is not a buy link, from its decoded locator

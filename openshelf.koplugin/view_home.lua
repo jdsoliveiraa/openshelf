@@ -220,7 +220,7 @@ function HomeView:homeRows()
     -- source order (Settings.homeShelves; cached under "<provider id>:<key>",
     -- refreshed in the background when stale)
     for __, shelf in ipairs(Settings.homeShelves()) do
-        local entries, stale = Browse.get(shelf.id)
+        local entries, stale, has_more = Browse.get(shelf.id)
         if (not entries or stale) and not self.browse_requested[shelf.id] and NetworkMgr:isConnected() then
             self.browse_requested[shelf.id] = true
             Browse.refresh(shelf.id, function(res)
@@ -231,7 +231,7 @@ function HomeView:homeRows()
         if entries and #entries > 0 then
             add_shelf(Shelf.rows(self, {
                 title = shelf.title, entries = entries, mark_downloaded = true,
-                on_see_all = function() self:openList(shelf.title, entries) end,
+                on_see_all = function() self:openList(shelf.title, entries, shelf.id, has_more) end,
                 on_tap = function(e) self:openDetail(e) end,
                 on_hold = function(e) App.holdDownload(e, self) end,
                 status = function(e) return App.bookStatus(e) end,
@@ -524,9 +524,11 @@ function HomeView:openMyBooks()
     UIManager:show(MyBooksView:new{ on_change = function() self:rebuild() end })
 end
 
-function HomeView:openList(title, entries)
+-- shelf_id + has_more (a browse shelf's cached page 1) give the list Load more.
+function HomeView:openList(title, entries, shelf_id, has_more)
     local ListView = require("view_list")
-    UIManager:show(ListView:new{ title = title, entries = entries, on_change = function() self:rebuild() end })
+    UIManager:show(ListView:new{ title = title, entries = entries, shelf_id = shelf_id, has_more = has_more,
+        on_change = function() self:rebuild() end })
 end
 
 function HomeView:openSettings()
