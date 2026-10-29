@@ -381,6 +381,21 @@ diskutil eject /Volumes/KOBOeReader
   path), so nothing hardcodes `/mnt/onboard/.adds/koreader/plugins`.
   Siblings named `*.koplugin.old` / `*.koplugin.staging` are ignored by
   KOReader's loader (it only loads names ending in `.koplugin`).
+- **Updater swap cut off (manual recovery).** The swap is two renames:
+  `openshelf.koplugin` → `openshelf.koplugin.old`, then
+  `openshelf.koplugin.staging/openshelf.koplugin` → `openshelf.koplugin`. If
+  KOReader dies or the battery cuts out between them, OpenShelf is simply gone
+  from the menu (no `openshelf.koplugin` folder) and nothing can recover it
+  automatically — the plugin that would do it isn't there. In
+  `/mnt/onboard/.adds/koreader/plugins/` (SSH, or USB + `sync`):
+  - `openshelf.koplugin` missing, `openshelf.koplugin.old` present → rename
+    `.old` back: `mv openshelf.koplugin.old openshelf.koplugin && sync`
+    (the previous version, known good). Prefer this.
+  - Only if `.old` is missing too: `mv openshelf.koplugin.staging/openshelf.koplugin
+    openshelf.koplugin && sync` (the new version, already checksum-verified).
+  - Then delete any leftover `openshelf.koplugin.staging` and restart KOReader.
+  A leftover `.staging` or `.old` next to a working `openshelf.koplugin` is
+  harmless (never loaded; cleared/replaced by the next update).
 - **The emulator boots into the quickstart guide** until `quickstart_shown_version`
   in `.kohome/settings.reader.lua` is ≥ KOReader's force-show version (a from-source
   build normalizes to 0, so set it huge). Until then the file manager never shows

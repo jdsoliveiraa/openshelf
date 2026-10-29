@@ -1501,6 +1501,28 @@ local fs4 = { [L] = "v1", [L .. ".old"] = "v0", [S] = "v2" }
 local ok4 = U.swap(fakefs(fs4, "remove"), L, S)
 check(not ok4 and fs4[L] == "v1" and fs4[L .. ".old"] == "v0", "stuck old backup -> abort before touching live")
 check(not U.swap(fakefs({ [L] = "v1" }), L, S), "no staged folder -> refuse")
+
+check(U.isZip("PK\3\4rest of zip"), "zip signature accepted")
+check(not U.isZip("ustar\0") and not U.isZip("PK") and not U.isZip(nil) and not U.isZip("<html>"),
+      "tar / short / html / nil are not zips")
+
+check(U.urlAllowed("https://api.github.com/x", false), "https allowed")
+check(U.urlAllowed("HTTPS://objects.githubusercontent.com/x", false), "https scheme case-insensitive")
+check(not U.urlAllowed("http://github.com/x", false), "plain http refused")
+check(not U.urlAllowed("http://127.0.0.1:8765/ok.json", false), "local http refused without the dev override")
+check(U.urlAllowed("http://127.0.0.1:8765/ok.json", true), "local http allowed with the dev override")
+check(U.urlAllowed("http://localhost/ok.json", true), "localhost allowed with the dev override")
+check(not U.urlAllowed("http://example.com/ok.json", true), "remote http refused even with the override")
+check(not U.urlAllowed("http://127.0.0.1.evil.com/x", true), "lookalike host refused")
+check(not U.urlAllowed("http://127.0.0.1@evil.com/x", true), "userinfo trick refused")
+check(not U.urlAllowed("ftp://x/y", true) and not U.urlAllowed("file:///etc/passwd", true) and not U.urlAllowed(nil, true),
+      "other schemes refused")
+check(U.releaseUrlsOk(r, false), "GitHub-style https assets pass")
+local insecure = U.parseRelease(rel_json{ assets = {
+    { name = "openshelf-v0.6.2.zip", browser_download_url = "http://dl/zip", size = 1 },
+    { name = "openshelf-v0.6.2.zip.sha256", browser_download_url = "https://dl/sha" } } })
+local okr, errr = U.releaseUrlsOk(insecure, false)
+check(not okr and errr:find("http://dl/zip", 1, true), "http asset URL refused", errr)
 end)()
 
 

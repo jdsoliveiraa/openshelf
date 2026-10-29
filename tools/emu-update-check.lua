@@ -220,6 +220,8 @@ if PHASE == "1" then
         { "evil", "unexpected archive content" },
         { "wrongver", "contains version 0.6.1" },
         { "nosum", "no checksum file" },
+        { "tar", "not a zip file" },
+        { "insecure", "refusing non-https download" },
     }
     for __, c in ipairs(cases) do
         local s, needle = c[1], c[2]

@@ -12,6 +12,9 @@ that doesn't need KOReader, so test/unit.lua can drive it.
   Logic.shouldAutoCheck(state, now)         -> bool (24 h throttle)
   Logic.shouldPrompt(state, version, manual) -> bool ("Later" suppression)
   Logic.swap(fs, live, staged)              -> true or nil, err (folder swap)
+  Logic.isZip(head)                         -> bool (zip signature PK\3\4)
+  Logic.urlAllowed(url, allow_local_http)   -> bool (https only)
+  Logic.releaseUrlsOk(rel, allow_local_http) -> true or nil, err
 
 `state` is the plain table the updater keeps in settings:
   { auto = bool|nil (nil = on), last_check = os.time()|nil, skipped = "x.y.z"|nil }
@@ -183,6 +186,37 @@ end
 function Logic.shouldPrompt(state, version, manual)
     if manual then return true end
     return not (state and state.skipped == version)
+end
+
+--- The download must be a zip (local file header "PK\3\4"): anything else,
+-- e.g. a tar whose hardlink entries KOReader's archiver reports as plain
+-- files, never reaches libarchive (which opens every format).
+function Logic.isZip(head)
+    return type(head) == "string" and head:sub(1, 4) == "PK\3\4"
+end
+
+local LOCAL_HOSTS = { ["localhost"] = true, ["127.0.0.1"] = true }
+
+--- Update traffic is https only: the API URL, asset URLs and every redirect
+-- they follow. Plain http is accepted only for localhost / 127.0.0.1 and
+-- only when the caller says so (the OPENSHELF_UPDATE_API dev override for
+-- the emulator's fake release server).
+function Logic.urlAllowed(url, allow_local_http)
+    if type(url) ~= "string" then return false end
+    local lower = url:lower()
+    if lower:match("^https://[^/]") then return true end
+    if not allow_local_http then return false end
+    local host = lower:match("^http://([^/:?#]+)")
+    return host ~= nil and LOCAL_HOSTS[host] == true
+end
+
+function Logic.releaseUrlsOk(rel, allow_local_http)
+    for __, asset in ipairs({ rel and rel.zip, rel and rel.sha256 }) do
+        if asset and not Logic.urlAllowed(asset.url, allow_local_http) then
+            return nil, "refusing non-https download " .. tostring(asset.url)
+        end
+    end
+    return true
 end
 
 --- Put the staged plugin in place of the live one, keeping one backup:

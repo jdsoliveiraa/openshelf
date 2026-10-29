@@ -14,6 +14,8 @@
 #   wrongver  v0.6.2  zip whose openshelf_version.lua = 0.6.1 -> "update contains version 0.6.1"
 #   nosum     v0.6.2  no .sha256 asset                      -> "no checksum file"
 #   evil      v0.6.2  zip with an entry outside the plugin folder -> "unexpected archive content"
+#   tar       v0.6.2  a tar (not a zip), matching .sha256   -> "not a zip file"
+#   insecure  v0.6.2  zip asset URL is plain http to a remote host -> "refusing non-https download"
 set -euo pipefail
 HERE="$(cd "$(dirname "$0")/.." && pwd)"
 DIR="${1:?usage: emu-update-serve.sh DIR [PORT]}"; PORT="${2:-8765}"
@@ -49,7 +51,7 @@ release_json() {
 EOF
 }
 
-for s in ok ok3 badsum trunc badzip wrongver nosum evil; do mkdir -p "$DIR/$s"; done
+for s in ok ok3 badsum trunc badzip wrongver nosum evil tar insecure; do mkdir -p "$DIR/$s"; done
 
 build_zip 0.6.2 "$DIR/ok/openshelf-v0.6.2.zip"
 sha "$DIR/ok/openshelf-v0.6.2.zip" openshelf-v0.6.2.zip > "$DIR/ok/openshelf-v0.6.2.zip.sha256"
@@ -83,6 +85,15 @@ build_zip 0.6.2 "$DIR/evil/openshelf-v0.6.2.zip" evil.lua
 sha "$DIR/evil/openshelf-v0.6.2.zip" openshelf-v0.6.2.zip > "$DIR/evil/openshelf-v0.6.2.zip.sha256"
 release_json evil v0.6.2 "$(size "$DIR/evil/openshelf-v0.6.2.zip")" 1
 
-echo "serving $DIR on $BASE (scenarios: ok ok3 badsum trunc badzip wrongver nosum evil)"
+(cd "$WORK/src" && tar -cf "$DIR/tar/openshelf-v0.6.2.zip" openshelf.koplugin)
+sha "$DIR/tar/openshelf-v0.6.2.zip" openshelf-v0.6.2.zip > "$DIR/tar/openshelf-v0.6.2.zip.sha256"
+release_json tar v0.6.2 "$(size "$DIR/tar/openshelf-v0.6.2.zip")" 1
+
+cp "$DIR/ok/openshelf-v0.6.2.zip" "$DIR/ok/openshelf-v0.6.2.zip.sha256" "$DIR/insecure/"
+release_json insecure v0.6.2 "$FULL" 1
+sed -i.bak 's|"browser_download_url": "http://127.0.0.1:[0-9]*/insecure/openshelf-v0.6.2.zip"|"browser_download_url": "http://example.com/openshelf-v0.6.2.zip"|' "$DIR/insecure.json"
+rm -f "$DIR/insecure.json.bak"
+
+echo "serving $DIR on $BASE (scenarios: ok ok3 badsum trunc badzip wrongver nosum evil tar insecure)"
 rm -rf "$WORK"; trap - EXIT
 cd "$DIR" && exec python3 -m http.server "$PORT" --bind 127.0.0.1

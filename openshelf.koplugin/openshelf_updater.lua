@@ -22,7 +22,8 @@ settings/openshelf*, drop-in providers and downloaded books live elsewhere.
 
 Dev overrides (emulator tests; never set on a device):
   OPENSHELF_FAKE_VERSION=0.6.0      pretend to run this version
-  OPENSHELF_UPDATE_API=<url>        release JSON instead of GitHub's latest
+  OPENSHELF_UPDATE_API=<url>        release JSON instead of GitHub's latest (the only
+                                    way plain http is accepted, and only to localhost)
   OPENSHELF_UPDATE_PLUGIN_DIR=<dir> install into this folder instead of our own
 A plugin folder that is a symlink (scripts/emu.sh links the dev checkout) is
 never updated.
@@ -49,8 +50,18 @@ function Updater.runningVersion()
     return os.getenv("OPENSHELF_FAKE_VERSION") or Version
 end
 
+local function api_override()
+    local v = os.getenv("OPENSHELF_UPDATE_API")
+    if v and v ~= "" then return v end
+end
+
 local function api_url()
-    return os.getenv("OPENSHELF_UPDATE_API") or Logic.API_LATEST
+    return api_override() or Logic.API_LATEST
+end
+
+-- https only; plain http to localhost only through the dev override.
+local function allow_url(url)
+    return Logic.urlAllowed(url, api_override() ~= nil)
 end
 
 --- The live plugin folder: the directory this file was loaded from (the
@@ -140,15 +151,17 @@ function Updater.prepare(rel, staging)
     local ok, err = lfs.mkdir(staging)
     if not ok then fail(T(_("cannot create %1 (%2)"), staging, tostring(err))) end
 
+    local urls_ok, uerr = Logic.releaseUrlsOk(rel, api_override() ~= nil)
+    if not urls_ok then fail(uerr) end
     local zip = staging .. "/" .. rel.zip.name
-    ok, err = HttpUtil.download(rel.zip.url, zip, { block_timeout = 30, total_timeout = 240 })
+    ok, err = HttpUtil.download(rel.zip.url, zip, { block_timeout = 30, total_timeout = 240, allow_url = allow_url })
     if not ok then fail(T(_("download failed (%1)"), tostring(err))) end
     local size = lfs.attributes(zip, "size") or 0
     if rel.zip.size and size ~= rel.zip.size then
         fail(T(_("download incomplete (%1 of %2 bytes)"), size, rel.zip.size))
     end
 
-    local sum_text, serr = HttpUtil.getBody(rel.sha256.url, { block_timeout = 15, total_timeout = 30 })
+    local sum_text, serr = HttpUtil.getBody(rel.sha256.url, { block_timeout = 15, total_timeout = 30, allow_url = allow_url })
     if not sum_text then fail(T(_("checksum download failed (%1)"), tostring(serr))) end
     local expected, perr = Logic.parseChecksum(sum_text, rel.zip.name)
     if not expected then fail(perr) end
@@ -156,6 +169,7 @@ function Updater.prepare(rel, staging)
     if not data then fail(_("cannot read the downloaded file")) end
     local actual = sha2.sha256(data):lower()
     if actual ~= expected then fail(_("checksum mismatch: the download is corrupt")) end
+    if not Logic.isZip(data) then fail(_("not a valid archive (not a zip file)")) end
 
     extract(zip, staging)
     os.remove(zip)
@@ -236,6 +250,9 @@ function Updater.install(rel)
             interval = 0.5,
             on_done = function(res)
                 done()
+                -- staged files were written by the job: get them onto the
+                -- (vfat) disk before the renames point the plugin at them
+                pcall(os.execute, "sync")
                 local ok, err = Updater.swap(live, res and res.staged)
                 remove_tree(staging)
                 if ok then installed(rel) else install_failed(err) end
@@ -269,7 +286,10 @@ end
 
 local function fetch_latest()
     local HttpUtil = require("http_util")
-    local json, err = HttpUtil.getJSON(api_url(), {
+    local url = api_url()
+    if not allow_url(url) then fail("refusing non-https update URL " .. url) end
+    local json, err = HttpUtil.getJSON(url, {
+        allow_url = allow_url,
         headers = { Accept = "application/vnd.github+json" },
         block_timeout = 15, total_timeout = 30,
     })
