@@ -450,6 +450,69 @@ eq(doab_both[1].format, "epub", "doab: epub preferred as primary")
 eq(doab_both[1].alternates[1].format, "pdf", "doab: pdf offered as alternate")
 eq(doab_both[1].alternates[1].locator.url, "https://directory.doabooks.org/rest/b/pdf", "doab: alternate locator")
 
+print("== Gutendex paging: every match exactly once (#1) ==")
+-- Synthetic Gutendex: fixed 32 rows per page, `next` a URL string until the
+-- last page and JSON null (a function on the device) there. Every 7th row
+-- has no EPUB and is dropped by the parser, but still counts toward offsets.
+do
+    local function gutendex(total)
+        local requests = 0
+        local function getJSON(url)
+            requests = requests + 1
+            local n = tonumber(url:match("[?&]page=(%d+)"))
+            local first = (n - 1) * 32 + 1
+            if first > math.max(total, 1) then return nil, "404 Invalid page." end
+            local results = {}
+            for id = first, math.min(first + 31, total) do
+                local formats = { ["image/jpeg"] = "https://g/" .. id .. ".jpg" }
+                if id % 7 ~= 0 then formats["application/epub+zip"] = "https://g/" .. id .. ".epub" end
+                results[#results + 1] = { id = id, title = "Book " .. id, authors = { { name = "A" } },
+                    languages = { "pt" }, formats = formats }
+            end
+            local more = first + 31 < total
+            return { count = total, results = results,
+                     next = more and ("https://gutendex.com/books/?page=" .. (n + 1)) or NULL }
+        end
+        local ctx = setmetatable({ http = { getJSON = getJSON } }, { __index = CTX })
+        return ctx, function() local r = requests; requests = 0; return r end
+    end
+    local providers = { { "gutendex", Gut }, { "gutenberg_pt", dofile(this .. "../examples/gutenberg_pt.lua") } }
+    for __, pv in ipairs(providers) do
+        for ___, total in ipairs({ 0, 5, 32, 33, 64, 75, 100 }) do
+            for ____, limit in ipairs({ 10, 15, 30 }) do
+                local ctx, reqs = gutendex(total)
+                local seen, dups, ok_more, max_req, ok_size = {}, 0, true, 0, true
+                local page, more = 0, true
+                while more and page < 50 do
+                    page = page + 1
+                    local rows, has_more = pv[2].search("q", limit, page, ctx)
+                    assert(rows, pv[1] .. ": search failed: " .. tostring(has_more))
+                    max_req = math.max(max_req, reqs())
+                    if #rows > limit then ok_size = false end
+                    for _____, r in ipairs(rows) do
+                        local id = tonumber(r.locator.url:match("/(%d+)%.epub$"))
+                        if seen[id] then dups = dups + 1 end
+                        seen[id] = true
+                    end
+                    -- has_more is true exactly while unshown offsets remain
+                    if has_more ~= (page * limit < total) then ok_more = false end
+                    more = has_more
+                end
+                local missing = 0
+                for id = 1, total do
+                    if id % 7 ~= 0 and not seen[id] then missing = missing + 1 end
+                end
+                local tag = ("%s total=%d limit=%d"):format(pv[1], total, limit)
+                eq(missing, 0, tag .. ": every EPUB row shown")
+                eq(dups, 0, tag .. ": no row shown twice")
+                check(ok_more, tag .. ": has_more true exactly while rows remain")
+                check(ok_size, tag .. ": never more than limit rows")
+                check(max_req <= 2, tag .. ": at most two requests per page", max_req)
+            end
+        end
+    end
+end
+
 print("== Library migration v1 -> v2 (recorded v0.5 file) ==")
 -- test/fixtures/library_v1.json was written by the v0.5 library/entry/provider
 -- code (commit 71eb2a7) and KOReader-style JSON: ids are "<display name>|<locator>".

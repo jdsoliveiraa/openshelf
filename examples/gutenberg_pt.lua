@@ -46,11 +46,31 @@ function P.parse(data, limit, ctx)
     return entries, type(data.next) == "string"
 end
 
+-- Gutendex serves a fixed 32 rows per page, but OpenShelf pages by `limit`
+-- (10, 15 or 30): OpenShelf page N is result offsets [(N-1)*limit, N*limit).
+-- Fetch the one or two Gutendex pages covering that range and slice it, so
+-- Load more shows every book exactly once.
+local GUTENDEX_PAGE = 32
+
 function P.search(query, limit, page, ctx)
-    local url = ("%s&search=%s&page=%d"):format(BASE, ctx.url_escape(query), page)
-    local data, err = ctx.http.getJSON(url)
-    if not data then return nil, err end
-    return P.parse(data, limit, ctx)
+    local start = (page - 1) * limit                    -- 0-based offset
+    local gpage = math.floor(start / GUTENDEX_PAGE) + 1
+    local skip = start - (gpage - 1) * GUTENDEX_PAGE
+    local rows, more = {}, true
+    while more and #rows < skip + limit do              -- at most two requests
+        local url = ("%s&search=%s&page=%d"):format(BASE, ctx.url_escape(query), gpage)
+        local data, err = ctx.http.getJSON(url)
+        if not data then return nil, err end
+        for __, book in ipairs(type(data.results) == "table" and data.results or {}) do
+            rows[#rows + 1] = book
+        end
+        more = type(data.next) == "string"
+        gpage = gpage + 1
+    end
+    local window = {}
+    for i = skip + 1, math.min(skip + limit, #rows) do window[#window + 1] = rows[i] end
+    local entries = P.parse({ results = window }, limit, ctx)
+    return entries, more or #rows > skip + limit
 end
 
 function P.resolve(locator)

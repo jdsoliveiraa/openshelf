@@ -50,13 +50,41 @@ function P.parse(data, limit, ctx)
     return results, has_more
 end
 
+-- Gutendex serves a fixed 32 rows per page; OpenShelf pages by `limit`
+-- (10, 15 or 30). OpenShelf page N is result offsets [(N-1)*limit, N*limit),
+-- so it spans one or two Gutendex pages; fetch those and slice.
+local GUTENDEX_PAGE = 32
+
+--- Rows of OpenShelf page `page` from `fetch(gutendex_page) → data, err`.
+--- At most two requests (limit <= 32). Returns raw rows, has_more.
+function P.window(fetch, limit, page)
+    local start = (page - 1) * limit                    -- 0-based offset
+    local gpage = math.floor(start / GUTENDEX_PAGE) + 1
+    local skip = start - (gpage - 1) * GUTENDEX_PAGE    -- rows of gpage before ours
+    local rows, more = {}, true
+    while more and #rows < skip + limit do
+        local data, err = fetch(gpage)
+        if not data then return nil, err end
+        for __, row in ipairs(type(data.results) == "table" and data.results or {}) do
+            rows[#rows + 1] = row
+        end
+        -- JSON null is a function on the device: test the type.
+        more = type(data.next) == "string" and data.next ~= ""
+        gpage = gpage + 1
+    end
+    local window = {}
+    for i = skip + 1, math.min(skip + limit, #rows) do window[#window + 1] = rows[i] end
+    return window, more or #rows > skip + limit
+end
+
 function P.search(query, limit, page, ctx)
     limit = limit or 20
     page = page or 1
-    local url = BASE .. "?search=" .. ctx.url_escape(query) .. "&page=" .. page
-    local data, err = ctx.http.getJSON(url)
-    if not data then return nil, err end
-    return P.parse(data, limit, ctx)
+    local base = BASE .. "?search=" .. ctx.url_escape(query) .. "&page="
+    local rows, has_more = P.window(function(n) return ctx.http.getJSON(base .. n) end, limit, page)
+    if not rows then return nil, has_more end
+    local entries = P.parse({ results = rows }, limit, ctx)
+    return entries, has_more
 end
 
 function P.browse(key, limit, ctx)
