@@ -200,6 +200,20 @@ shelves from any provider, dev kit (provider check tool, template plugin, exampl
 drop-in). Tickets #1–#9 landed via PRs #13, #16, #17. Still to verify on the Kobo:
 the subprocess deadline, external plugin loading, migration of a real v0.5 library.
 
+**Built (after v0.6.1, ticket #6): self-update from GitHub Releases** —
+Settings → Updates: *Check for updates* + automatic check (default on, ≤ 1 per
+24 h when OpenShelf opens, silent offline / up to date). Offer shows current →
+new + release-notes start; *Later* mutes that version for automatic checks.
+Install = download zip + `.sha256` in a job (deadline 300 s), size + SHA-256
+check, every zip entry vetted, extract with `ffi/archiver` into
+`openshelf.koplugin.staging`, validate (`_meta.lua`, `main.lua`, version == tag),
+swap (live → `.old`, staged → live, restore on failure), KOReader restart
+prompt. Emulator-verified on a copied plugin (`tools/emu-update-check.lua`).
+Device has `ffi/archiver`, `ffi/sha2`, `libarchive.so.13`, `askForRestart`
+(checked over SSH 2026-10-29, KOReader v2026.07.2). Still to verify on the
+Kobo: the forked install job and an end-to-end update once a release with
+the updater *and* a later release exist.
+
 **Next:**
 - [ ] **Standard Ebooks via authenticated OPDS** (opt-in; user pastes a patron
       token in Sources). `opds.lua` parser is ready; build it as the first
@@ -248,6 +262,7 @@ scripts/emu.sh --walk tools/emu-walkthrough.lua --shots /tmp/shots   # scripted 
 # deploy to device over SSH (preferred) — on the Kobo: Settings → Network →
 # SSH server → start; then (stages, swaps, syncs, md5-verifies all files):
 scripts/deploy.sh            # host alias `kobo` from ~/.ssh/config
+# (releases after the first updater-capable one: OpenShelf settings → Check for updates on the device)
 # then on the Kobo: top menu → Exit → Restart KOReader (plugins load at startup)
 scripts/deploy-launcher.sh   # KFMon watch + script + icon from kobo/ → then REBOOT the Kobo
 
@@ -359,6 +374,13 @@ diskutil eject /Volumes/KOBOeReader
   each book** — `init()` runs several times per process. Anything that must happen
   once (the `OPENSHELF_DEV_SCRIPT` hook) needs a module-level guard; the home-mode
   auto-open relies on exactly this rebuild.
+- **The self-updater must never run against the emulator's symlinked plugin**
+  — renaming the link would move the dev checkout out of the plugins dir. It
+  refuses a symlinked plugin folder; test with `scripts/emu.sh --home DIR
+  --copy`. Its own folder comes from `debug.getinfo` (the loader's plugin
+  path), so nothing hardcodes `/mnt/onboard/.adds/koreader/plugins`.
+  Siblings named `*.koplugin.old` / `*.koplugin.staging` are ignored by
+  KOReader's loader (it only loads names ending in `.koplugin`).
 - **The emulator boots into the quickstart guide** until `quickstart_shown_version`
   in `.kohome/settings.reader.lua` is ≥ KOReader's force-show version (a from-source
   build normalizes to 0, so set it huge). Until then the file manager never shows

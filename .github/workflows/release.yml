@@ -1,6 +1,7 @@
 name: release
 
-# Push a tag vX.Y.Z on main: run the checks, zip the plugin, publish a release.
+# Push a tag vX.Y.Z on main: run the checks, zip the plugin, publish a release
+# with the zip and its checksum (the in-app updater verifies the .sha256).
 on:
   push:
     tags: ['v*']
@@ -25,7 +26,11 @@ jobs:
         run: |
           find openshelf.koplugin \( -name '.DS_Store' -o -name '._*' \) -delete
           zip -qr "openshelf-$GITHUB_REF_NAME.zip" openshelf.koplugin
+      - name: Checksum
+        run: |
+          sha256sum "openshelf-$GITHUB_REF_NAME.zip" > "openshelf-$GITHUB_REF_NAME.zip.sha256"
+          cat "openshelf-$GITHUB_REF_NAME.zip.sha256"
       - name: Publish GitHub Release
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh release create "$GITHUB_REF_NAME" "openshelf-$GITHUB_REF_NAME.zip" --title "OpenShelf $GITHUB_REF_NAME" --generate-notes --verify-tag
+        run: gh release create "$GITHUB_REF_NAME" "openshelf-$GITHUB_REF_NAME.zip" "openshelf-$GITHUB_REF_NAME.zip.sha256" --title "OpenShelf $GITHUB_REF_NAME" --generate-notes --verify-tag

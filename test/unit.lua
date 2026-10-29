@@ -1377,6 +1377,133 @@ eq(CloseRefresh.mode(fm, nil), "ui", "a failed hand-off does not leave refreshes
 end
 
 
+---------------------------------------------------------------------------
+-- Self-update (#6): version compare, release JSON, checksum file, staged
+-- plugin validation, zip entry vetting, 24 h throttle, "Later", folder swap.
+---------------------------------------------------------------------------
+print("== openshelf_updater_logic ==")
+;(function() -- own function: the main chunk is at the 200-local limit
+local U = require("openshelf_updater_logic")
+eq(U.compare("0.10.0", "0.9.9"), 1, "0.10.0 > 0.9.9 (numeric, not string)")
+eq(U.compare("0.6.1", "0.6.1"), 0, "equal versions")
+eq(U.compare("v0.6.1", "0.6.2"), -1, "leading v accepted")
+eq(U.compare("1.0.0", "0.99.99"), 1, "major wins")
+eq(U.compare("0.7.0-rc1", "0.6.1"), nil, "prerelease suffix is not a version")
+eq(U.compare("0.7", "0.6.1"), nil, "two-part version rejected")
+check(U.isNewer("0.6.2", "0.6.1") and not U.isNewer("0.6.1", "0.6.1") and not U.isNewer("0.6.0", "0.6.1"),
+      "isNewer only for strictly newer")
+check(not U.isNewer(nil, "0.6.1") and not U.isNewer("garbage", "0.6.1"), "isNewer false on junk")
+
+local function rel_json(over)
+    local t = {
+        tag_name = "v0.6.2", draft = false, prerelease = false, body = "## What's changed\n* Updater",
+        html_url = "https://github.com/x/releases/v0.6.2",
+        assets = {
+            { name = "openshelf-v0.6.2.zip", browser_download_url = "https://dl/zip", size = 1234 },
+            { name = "openshelf-v0.6.2.zip.sha256", browser_download_url = "https://dl/sha", size = 87 },
+        },
+    }
+    for k, val in pairs(over or {}) do t[k] = val end
+    return t
+end
+local r = U.parseRelease(rel_json())
+check(r ~= nil, "a well-formed release parses")
+eq(r and r.version, "0.6.2", "release version from the tag")
+eq(r and r.zip.url, "https://dl/zip", "zip asset found by name")
+eq(r and r.zip.size, 1234, "zip asset size kept")
+eq(r and r.sha256 and r.sha256.url, "https://dl/sha", "checksum asset found by name")
+local r2, e2 = U.parseRelease(rel_json{ prerelease = true })
+check(r2 == nil and e2:find("prerelease"), "prerelease ignored", e2)
+check(U.parseRelease(rel_json{ draft = true }) == nil, "draft ignored")
+check(U.parseRelease(rel_json{ tag_name = "v0.7.0-beta" }) == nil, "suffixed tag ignored")
+check(U.parseRelease(rel_json{ tag_name = "0.6.2" }) == nil, "tag without v ignored")
+check(U.parseRelease(rel_json{ tag_name = NULL }) == nil, "null tag ignored")
+local r3, e3 = U.parseRelease(rel_json{ assets = { { name = "other.zip", browser_download_url = "u" } } })
+check(r3 == nil and e3:find("openshelf-v0.6.2.zip", 1, true), "release without the zip refused", e3)
+local r4 = U.parseRelease(rel_json{ assets = { { name = "openshelf-v0.6.2.zip", browser_download_url = "u" } } })
+check(r4 and r4.sha256 == nil, "missing checksum asset reported as nil (install refuses)")
+local r5 = U.parseRelease(rel_json{ body = NULL })
+eq(r5 and r5.notes, "", "null release notes -> empty")
+check(U.parseRelease(nil) == nil and U.parseRelease({ message = "API rate limit exceeded" }) == nil,
+      "error objects are not releases")
+local real = U.parseRelease(read_fixture("github_release_latest.json"))
+eq(real and real.tag, "v0.6.1", "recorded GitHub /releases/latest parses")
+check(real and real.sha256 == nil and real.zip.size and real.zip.size > 0,
+      "recorded v0.6.1 has the zip (sized) but no checksum asset")
+
+local H = string.rep("ab", 32)
+eq(U.parseChecksum(H .. "  openshelf-v0.6.2.zip\n", "openshelf-v0.6.2.zip"), H, "sha256sum line parses")
+eq(U.parseChecksum(H:upper() .. " *openshelf-v0.6.2.zip", "openshelf-v0.6.2.zip"), H, "binary-mode marker, upper hex")
+eq(U.parseChecksum(H, "openshelf-v0.6.2.zip"), H, "bare hash accepted")
+check(U.parseChecksum(H .. "  other.zip", "openshelf-v0.6.2.zip") == nil, "checksum for another file refused")
+check(U.parseChecksum(string.rep("a", 63), "x") == nil, "short hash refused")
+check(U.parseChecksum("not a hash", "x") == nil and U.parseChecksum(nil, "x") == nil, "junk refused")
+
+eq(U.notesExcerpt("## What's changed\n\n\n* **Fix** things\r\n", 400), "What's changed\n\n* Fix things",
+   "notes: headings and bold dropped, blank runs squeezed")
+local long = U.notesExcerpt(string.rep("word ", 200), 100)
+check(#long <= 104 and long:sub(-3) == "…", "long notes cut with an ellipsis", #long)
+eq(U.notesExcerpt(NULL), "", "null notes -> empty")
+
+eq(U.stagedVersion('-- comment\nreturn "0.6.2"\n'), "0.6.2", "staged version read as text")
+eq(U.stagedVersion("return 42"), nil, "non-string version -> nil")
+local files = { ["_meta.lua"] = true, ["main.lua"] = true, ["openshelf_version.lua"] = true }
+local function has(f) return files[f] end
+check(U.validateStaged(has, 'return "0.6.2"', "0.6.2"), "staged plugin with matching version is valid")
+local okv, whyv = U.validateStaged(has, 'return "0.6.1"', "0.6.2")
+check(not okv and whyv:find("0.6.1", 1, true), "staged version != tag refused", whyv)
+files["main.lua"] = nil
+local okm, whym = U.validateStaged(has, 'return "0.6.2"', "0.6.2")
+check(not okm and whym:find("main.lua", 1, true), "staged plugin without main.lua refused", whym)
+
+check(U.archiveEntryOk("openshelf.koplugin/", "directory"), "root dir entry allowed")
+check(U.archiveEntryOk("openshelf.koplugin/providers/doab.lua", "file"), "nested file allowed")
+check(not U.archiveEntryOk("openshelf.koplugin/../../x.lua", "file"), ".. refused")
+check(not U.archiveEntryOk("/etc/passwd", "file"), "absolute path refused")
+check(not U.archiveEntryOk("other.koplugin/main.lua", "file"), "other top-level folder refused")
+check(not U.archiveEntryOk("openshelf.koplugin/link", "link"), "symlink entry refused")
+
+local DAY = U.CHECK_INTERVAL
+check(U.shouldAutoCheck({ auto = true }, 1000), "never checked -> due")
+check(U.shouldAutoCheck({}, 1000), "auto defaults on")
+check(not U.shouldAutoCheck({ auto = false }, 1000), "auto off -> never")
+check(not U.shouldAutoCheck({ auto = true, last_check = 1000 }, 1000 + DAY - 1), "within 24 h -> not due")
+check(U.shouldAutoCheck({ auto = true, last_check = 1000 }, 1000 + DAY), "24 h later -> due")
+check(U.shouldAutoCheck({ auto = true, last_check = 5000 }, 1000), "clock went backwards -> due")
+check(not U.shouldPrompt({ skipped = "0.6.2" }, "0.6.2", false), "Later suppresses that version on auto checks")
+check(U.shouldPrompt({ skipped = "0.6.2" }, "0.6.2", true), "manual check still offers it")
+check(U.shouldPrompt({ skipped = "0.6.2" }, "0.6.3", false), "a newer release is offered again")
+check(U.shouldPrompt({}, "0.6.2", false), "nothing skipped -> offer")
+
+-- Folder swap over a fake filesystem: { path = "contents" }.
+local function fakefs(t, fail_on)
+    return {
+        exists = function(p) return t[p] ~= nil end,
+        remove_tree = function(p) if fail_on ~= "remove" then t[p] = nil end; return true end,
+        rename = function(a, b)
+            if fail_on == a .. ">" .. b or t[a] == nil then return nil, "EIO" end
+            t[b], t[a] = t[a], nil
+            return true
+        end,
+    }
+end
+local L, S = "p/openshelf.koplugin", "p/openshelf.koplugin.staging/openshelf.koplugin"
+local fs1 = { [L] = "v1", [L .. ".old"] = "v0", [S] = "v2" }
+check(U.swap(fakefs(fs1), L, S), "swap succeeds")
+check(fs1[L] == "v2" and fs1[L .. ".old"] == "v1" and fs1[S] == nil, "new live, one .old backup (the previous one replaced)")
+local fs2 = { [L] = "v1", [S] = "v2" }
+local ok2, err2 = U.swap(fakefs(fs2, S .. ">" .. L), L, S)
+check(not ok2 and fs2[L] == "v1" and fs2[L .. ".old"] == nil, "failed install rename -> live restored", err2)
+local fs3 = { [L] = "v1", [S] = "v2" }
+local ok3 = U.swap(fakefs(fs3, L .. ">" .. L .. ".old"), L, S)
+check(not ok3 and fs3[L] == "v1", "cannot move live aside -> nothing changed")
+local fs4 = { [L] = "v1", [L .. ".old"] = "v0", [S] = "v2" }
+local ok4 = U.swap(fakefs(fs4, "remove"), L, S)
+check(not ok4 and fs4[L] == "v1" and fs4[L .. ".old"] == "v0", "stuck old backup -> abort before touching live")
+check(not U.swap(fakefs({ [L] = "v1" }), L, S), "no staged folder -> refuse")
+end)()
+
+
 print("== module names vs KOReader's own ==")
 -- Plugins share one flat require() namespace with KOReader. Anything KOReader
 -- loaded before plugins is cached in package.loaded, so a sibling with the same

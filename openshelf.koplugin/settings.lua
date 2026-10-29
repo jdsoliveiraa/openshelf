@@ -8,6 +8,9 @@ Everything about a source is keyed by its provider id (DESIGN.md §9.2, §9.5):
   - shelves_hidden    { [id] = true }  sources whose "Shelves on home" is off
   - default_view ("list" | "grid"), per_source (page size), recents (newest
     first, max 8), home_mode (open at start and after each book)
+  - update_auto (false = automatic update checks off), update_last_check
+    (os.time of the last automatic check), update_skipped (version answered
+    "Later" to) — see openshelf_updater_logic
 A v0.5 file keyed disabled_sources by display name; it is rewritten to ids
 the first time it is opened (openshelf_migrate.sourceSet).
 --]]
@@ -194,6 +197,30 @@ end
 
 function Settings.setHomeMode(on)
     save("home_mode", on and true or false)
+end
+
+---------------------------------------------------------------------------
+-- Self-update (openshelf_updater): the plain state table the pure logic
+-- reads, { auto, last_check, skipped }.
+---------------------------------------------------------------------------
+function Settings.updateState()
+    return {
+        auto = s():readSetting("update_auto") ~= false,
+        last_check = tonumber(s():readSetting("update_last_check")),
+        skipped = s():readSetting("update_skipped"),
+    }
+end
+
+function Settings.setUpdateAuto(on)
+    save("update_auto", on and true or false)
+end
+
+function Settings.setUpdateLastCheck(t)
+    save("update_last_check", t)
+end
+
+function Settings.setUpdateSkipped(version)
+    save("update_skipped", version)
 end
 
 ---------------------------------------------------------------------------
