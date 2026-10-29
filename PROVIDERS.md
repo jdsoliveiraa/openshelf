@@ -216,10 +216,23 @@ with `url` and optional `headers` (e.g. `Authorization`) that the host sends
 with the GET. A borrow row resolves here too. Return `nil, "reason"` when the
 file is not available; the reason is shown to the user verbatim.
 
-### 5.3 `browse(key, limit, ctx) → entries, err`
-`key` is one of your `shelves` keys. Results are cached on disk for 24 h under
-`<id>:<key>` and shown as a home shelf while the source is enabled and its
-"Shelves on home" toggle is on. `limit` is the shelf size (12 today).
+### 5.3 `browse(key, limit, ctx, page) → entries, has_more`
+`key` is one of your `shelves` keys. `limit` is the shelf size (12 today) on
+every page. `page` starts at 1 and is optional: absent or `nil` means 1. Page
+1 is cached on disk for 24 h under `<id>:<key>` and shown as a home shelf
+while the source is enabled and its "Shelves on home" toggle is on; the
+shelf's *See all* opens on that cached page.
+
+`has_more` is a boolean, as in §5.1: `true` when another page exists. *See
+all* then ends in *Load more*, which calls `browse` again with `page + 1`.
+The host asks for page N+1 only after page N returned `has_more == true`.
+On failure return `nil, "message"` as before (second value = error).
+
+**Older providers keep working.** A `browse(key, limit, ctx)` that ignores
+`page` and returns entries alone (or anything but `true` as the second value)
+is a single-page shelf: the home row is unchanged and *See all* lists those
+rows with no *Load more*. Return `has_more = true` only when you honour
+`page`, or *See all* would append the same rows again.
 
 ### 5.4 `check(ctx) → ok, message`
 Optional. Shown as **Test connection** in your source's submenu. Make one
@@ -363,6 +376,10 @@ and never shows a modal.
   timeout shows as `<name>: <reason>` in the status strip, never a dialog.
 - *Load more* calls `search` again with `page + 1` for every source that said
   `has_more`.
+- A shelf's *See all* opens on the cached page 1; when that page said
+  `has_more`, *Load more* calls `browse` with `page + 1` and appends the rows
+  (rows already shown are skipped). A failed page shows in the list's status
+  strip and *Load more* stays to retry.
 - The **filter dialog** lists sources in the same order; filtering happens
   before dedupe so "only Example Books" shows your edition even when a
   higher-quality one exists elsewhere.
@@ -403,7 +420,10 @@ for. `provider_check` runs, in order:
 5. **rows** — every row must be plain data (no functions, no cycles), have a
    locator of strings and numbers with a usable identity (§4.2), a known
    `action`, and keep that identity through a JSON round trip.
-6. **shelves** — `browse(key, 12, ctx)` for every shelf, same row checks.
+6. **shelves** — `browse(key, 12, ctx, 1)` for every shelf, same row checks;
+   fails on more than 12 rows or a `has_more` that is neither a boolean nor
+   absent. When page 1 says `has_more = true`, page 2 is fetched and checked
+   the same way, and fails if it repeats a row of page 1 (`page` ignored).
 7. **resolve** — the first row that is not a buy row, from its *round-tripped*
    locator (as a fresh process would), through the host's normalization.
 8. **head** — HEADs the URL with the resolved headers; reports content type and
@@ -451,3 +471,6 @@ changelog lives at the bottom of this file.
 
 ### Changelog
 - **api 1** (spec 2026-10-26, shipped in v0.6.0) — initial contract.
+- **api 1, additive** (#12, 2026-10-29) — `browse` takes an optional 4th
+  argument `page` and may return `has_more` (§5.3); *See all* pages with
+  *Load more*. Providers without it are single-page shelves, as before.

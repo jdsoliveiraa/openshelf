@@ -513,6 +513,120 @@ do
     end
 end
 
+print("== Gutendex shelves: See all pages, every row once (#12) ==")
+-- Same synthetic Gutendex as #1, keyed by the shelf's sort: browse pages at
+-- the shelf size (12) through P.window, page 1 equals the home shelf.
+do
+    local function gutendex(total)
+        local requests, urls = 0, {}
+        local function getJSON(url)
+            requests = requests + 1
+            urls[#urls + 1] = url
+            local n = tonumber(url:match("[?&]page=(%d+)")) or 1   -- page 1 has no page=
+            local first = (n - 1) * 32 + 1
+            if first > math.max(total, 1) then return nil, "404 Invalid page." end
+            local results = {}
+            for id = first, math.min(first + 31, total) do
+                local formats = { ["image/jpeg"] = "https://g/" .. id .. ".jpg" }
+                if id % 7 ~= 0 then formats["application/epub+zip"] = "https://g/" .. id .. ".epub" end
+                results[#results + 1] = { id = id, title = "Book " .. id, authors = { { name = "A" } },
+                    languages = { "en" }, formats = formats }
+            end
+            local more = first + 31 < total
+            return { count = total, results = results,
+                     next = more and ("https://gutendex.com/books/?page=" .. (n + 1)) or NULL }
+        end
+        local ctx = setmetatable({ http = { getJSON = getJSON } }, { __index = CTX })
+        return ctx, function() local r = requests; requests = 0; return r end, urls
+    end
+    for __, key in ipairs({ "popular", "new" }) do
+        for ___, total in ipairs({ 0, 5, 12, 13, 32, 33, 64, 75, 100 }) do
+            local ctx, reqs = gutendex(total)
+            local seen, dups, ok_more, max_req, ok_size = {}, 0, true, 0, true
+            local page, more = 0, true
+            while more and page < 50 do
+                page = page + 1
+                local rows, has_more = Gut.browse(key, 12, ctx, page)
+                assert(rows, "gutendex browse failed: " .. tostring(has_more))
+                max_req = math.max(max_req, reqs())
+                if #rows > 12 then ok_size = false end
+                if type(has_more) ~= "boolean" then ok_more = false end
+                for ____, r in ipairs(rows) do
+                    local id = tonumber(r.locator.url:match("/(%d+)%.epub$"))
+                    if seen[id] then dups = dups + 1 end
+                    seen[id] = true
+                end
+                if has_more ~= (page * 12 < total) then ok_more = false end
+                more = has_more
+            end
+            local missing = 0
+            for id = 1, total do
+                if id % 7 ~= 0 and not seen[id] then missing = missing + 1 end
+            end
+            local tag = ("gutendex:%s total=%d"):format(key, total)
+            eq(missing, 0, tag .. ": every EPUB row shown across pages")
+            eq(dups, 0, tag .. ": no row shown twice")
+            check(ok_more, tag .. ": has_more is a boolean, true exactly while rows remain")
+            check(ok_size, tag .. ": never more than 12 rows")
+            check(max_req <= 2, tag .. ": at most two requests per page", max_req)
+        end
+    end
+    local ctx, __, urls = gutendex(100)
+    local p1 = Gut.browse("popular", 12, ctx)
+    local p1b = Gut.browse("popular", 12, ctx, 1)
+    eq(#p1, #p1b, "browse without page = page 1")
+    eq(p1[1].locator.url, p1b[1].locator.url, "browse without page = page 1 (same rows)")
+    eq(urls[1], "https://gutendex.com/books/?sort=popular", "page 1 keeps the plain (cached) shelf URL")
+    Gut.browse("new", 12, ctx, 3)
+    eq(urls[#urls], "https://gutendex.com/books/?page=2&sort=descending",
+       "new shelf page 3 (offsets 24-35) reads Gutendex page 2, in Gutendex's own `next` URL shape")
+    local none, berr = Gut.browse("nope", 12, ctx, 1)
+    check(none == nil and tostring(berr):find("unknown shelf", 1, true), "unknown shelf key -> error", berr)
+    local fctx = setmetatable({ http = { getJSON = function() return nil, "HTTP 503" end } }, { __index = CTX })
+    local frows, ferr = Gut.browse("popular", 12, fctx, 2)
+    check(frows == nil and ferr == "HTTP 503", "a failed request -> nil, err", ferr)
+end
+
+print("== ShelfPager (See all Load more state, #12) ==")
+do
+    local ShelfPager = require("shelf_pager")
+    local function row(n) return { provider = "gutendex", title = "B" .. n, locator = { url = "https://g/" .. n } } end
+    local function rows(a, b) local t = {} for i = a, b do t[#t + 1] = row(i) end return t end
+    local pg = ShelfPager.new{ entries = rows(1, 12), has_more = true }
+    eq(#pg.entries, 12, "page 1 seeded")
+    check(pg:canLoadMore(), "has_more -> Load more")
+    eq(pg:begin(), 2, "next page is 2")
+    check(not pg:canLoadMore(), "no second request while one is running")
+    eq(pg:begin(), nil, "begin refused while loading")
+    eq(pg:append(rows(11, 22), true), 10, "append drops rows already shown")
+    eq(#pg.entries, 22, "appended in order")
+    eq(pg.entries[13].title, "B13", "new rows follow the old ones")
+    eq(pg:begin(), 3, "then page 3")
+    pg:fail("timed out")
+    eq(pg.err, "timed out", "failure remembered for the status line")
+    check(pg:canLoadMore(), "failure keeps Load more for a retry")
+    eq(pg:begin(), 3, "the retry asks for the same page")
+    check(pg.err == nil, "a retry clears the error")
+    eq(pg:append(rows(23, 25), false), 3, "last page appended")
+    eq(pg.page, 3, "page count advanced")
+    check(not pg:canLoadMore(), "has_more false -> no Load more")
+    eq(pg:begin(), nil, "never asks past a page that said no more")
+    local old = ShelfPager.new{ entries = rows(1, 12) }
+    check(not old:canLoadMore(), "no has_more (old provider) -> no Load more")
+    local legacy = ShelfPager.new{ entries = rows(1, 3), has_more = "yes" }
+    check(not legacy:canLoadMore(), "only has_more == true counts")
+    -- cache shape
+    local ce, more, was_legacy = ShelfPager.unpack(ShelfPager.pack(rows(1, 2), true))
+    check(#ce == 2 and more == true and was_legacy == false, "pack/unpack keeps entries and has_more")
+    ce, more, was_legacy = ShelfPager.unpack(rows(1, 2))
+    check(#ce == 2 and more == false and was_legacy == true, "pre-#12 cache (bare list) -> has_more false, legacy")
+    ce = ShelfPager.unpack(nil)
+    eq(ce, nil, "nothing cached -> nil")
+    local JSON_ = require("json")
+    ce, more = ShelfPager.unpack(JSON_.decode(JSON_.encode(ShelfPager.pack(rows(1, 1), true))))
+    check(#ce == 1 and more == true, "cache value survives JSON")
+end
+
 print("== Library migration v1 -> v2 (recorded v0.5 file) ==")
 -- test/fixtures/library_v1.json was written by the v0.5 library/entry/provider
 -- code (commit 71eb2a7) and KOReader-style JSON: ids are "<display name>|<locator>".
@@ -919,6 +1033,47 @@ eq(rows[1].provider, "shelfy", "browse rows carry the provider id")
 eq(rows[1].quality, 10, "browse rows get the provider quality")
 local none2, berr2 = Catalog.browse("nope:zip", 5)
 check(none2 == nil and berr2 ~= nil, "unknown shelf -> error", berr2)
+do
+local _rows, shelfy_more = Catalog.browse("shelfy:picks", 5)
+eq(shelfy_more, false, "old-style browse (entries only) -> has_more false: no Load more")
+
+-- #12: browse(key, limit, ctx, page) -> entries, has_more
+local paged_calls = {}
+Catalog.register{ api = 1, id = "pagey", name = "Pagey", quality = 10,
+    shelves = { { key = "all", title = "All of Pagey" } },
+    search = function() return {}, false end,
+    resolve = function(l) return l.url end,
+    browse = function(key, limit, ctx, page)
+        paged_calls[#paged_calls + 1] = { key = key, limit = limit, page = page }
+        local got = {}
+        for i = (page - 1) * limit + 1, math.min(page * limit, 30) do
+            got[#got + 1] = ctx.Entry.new{ title = "P" .. i, locator = { url = "https://pg/" .. i } }
+        end
+        return got, page * limit < 30
+    end }
+local pr1, pm1 = Catalog.browse("pagey:all", 12)
+check(#pr1 == 12 and pm1 == true, "page defaults to 1; has_more passed through", pm1)
+eq(paged_calls[1].page, 1, "provider receives page 1 when none given")
+local pr3, pm3 = Catalog.browse("pagey:all", 12, 3)
+check(#pr3 == 6 and pm3 == false, "page 3 is the last", pm3)
+eq(pr3[1].provider, "pagey", "paged rows are stamped too")
+eq(paged_calls[2].page, 3, "provider receives the page number")
+Catalog.register{ api = 1, id = "oddmore", name = "Odd", shelves = { { key = "k", title = "K" } },
+    search = function() return {}, false end, resolve = function(l) return l.url end,
+    browse = function(_k, _l, ctx) return { ctx.Entry.new{ title = "x", locator = { url = "u" } } }, "more!" end }
+local _orows, omore = Catalog.browse("oddmore:k", 12)
+eq(omore, false, "a non-boolean second return is not has_more")
+Catalog.register{ api = 1, id = "nilerr", name = "NilErr", shelves = { { key = "k", title = "K" } },
+    search = function() return {}, false end, resolve = function(l) return l.url end,
+    browse = function() return nil, "shelf down" end }
+local nrows, nil_err = Catalog.browse("nilerr:k", 12, 2)
+check(nrows == nil and nil_err == "shelf down", "nil, err still reports the error", nil_err)
+-- unregister the three fakes so later shelf-order checks see the usual set
+for i = #Catalog.providers, 1, -1 do
+    local id = Catalog.providers[i].id
+    if id == "pagey" or id == "oddmore" or id == "nilerr" then table.remove(Catalog.providers, i) end
+end
+end
 eq(Catalog.BROWSE, nil, "hardcoded BROWSE table gone")
 
 print("== Catalog.orderIds: arranged source order (DESIGN.md §9.5, decision 44) ==")
@@ -1394,6 +1549,44 @@ eq(seen_settings and seen_settings.lang, "en", "--set overrides a default")
 failed_with(good{ shelves = { { key = "top", title = "Top" } },
                   browse = function() return nil, "shelf broke" end }, "shelf broke", "a failing shelf browse fails")
 failed_with(good{ check = function() return false, "bad token" end }, "bad token", "a failing check() fails")
+
+-- #12: page 2 of a shelf when page 1 says has_more
+local function shelf_provider(browse)
+    return good{ shelves = { { key = "top", title = "Top" } }, browse = browse }
+end
+local pages_asked = {}
+local ok_paged = run_check(shelf_provider(function(_k, limit, ctx, page)
+    pages_asked[#pages_asked + 1] = page
+    local got = {}
+    for i = (page - 1) * limit + 1, page * limit do
+        got[#got + 1] = ctx.Entry.new{ title = "t" .. i, locator = { id = i } }
+    end
+    return got, page == 1
+end))
+check(ok_paged == true, "a paged shelf passes")
+eq(table.concat(pages_asked, ","), "1,2", "page 1 said has_more -> page 2 checked too")
+pages_asked = {}
+local ok_old = run_check(shelf_provider(function(_k, _l, ctx, page)
+    pages_asked[#pages_asked + 1] = page
+    return { ctx.Entry.new{ title = "t", locator = { id = 1 } } }
+end))
+check(ok_old == true, "an old-style shelf (entries only) passes")
+eq(table.concat(pages_asked, ","), "1", "no has_more -> page 2 not asked")
+failed_with(shelf_provider(function(_k, _l, ctx)
+    return { ctx.Entry.new{ title = "t", locator = { id = 1 } } }, true
+end), "repeats 1 row", "has_more but page ignored -> page 2 repeats page 1")
+failed_with(shelf_provider(function(_k, _l, ctx, page)
+    if page == 2 then return nil, "page two broke" end
+    return { ctx.Entry.new{ title = "t", locator = { id = 1 } } }, true
+end), "page two broke", "a failing page 2 fails")
+failed_with(shelf_provider(function(_k, _l, ctx)
+    return { ctx.Entry.new{ title = "t", locator = { id = 1 } } }, "yes"
+end), "has_more must be a boolean", "a non-boolean shelf has_more fails")
+failed_with(shelf_provider(function(_k, limit, ctx)
+    local got = {}
+    for i = 1, limit + 1 do got[i] = ctx.Entry.new{ title = "t" .. i, locator = { id = i } } end
+    return got
+end), "rows for limit", "more rows than the shelf size fails")
 
 local ok_buy = run_check(good{ search = function(_q, _l, _p, ctx)
     return { ctx.Entry.new{ action = "buy", title = "x", locator = { url = "https://shop/x" } },

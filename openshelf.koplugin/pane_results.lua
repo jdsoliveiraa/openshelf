@@ -11,6 +11,7 @@ the row that follows it.
       status = function(entry) -> { downloaded, missing, dl } end,
       on_tap = function(entry) end, on_hold = function(entry) end,
   })
+  local p = Pane.pageOf(view, entries, { mode =, avail_h = }, entry)   -- page holding entry
 --]]
 local HorizontalGroup = require("ui/widget/horizontalgroup")
 local VerticalGroup = require("ui/widget/verticalgroup")
@@ -261,6 +262,24 @@ function Pane.rows(view, entries, opts)
         end
     end
     return rows, total, page_entries
+end
+
+--- The page (1-based) on which `entry` (a table from `entries`) lands with the
+-- same layout Pane.rows uses; nil when absent. No widgets are built.
+function Pane.pageOf(view, entries, opts, entry)
+    local mode = opts.mode == "grid" and "grid" or "list"
+    local g = mode == "grid" and Pane.gridGeometry(view, opts.avail_h) or Pane.listGeometry(view)
+    local lines = build_lines(entries, mode, g)
+    for p, pg in ipairs(paginate(lines, opts.avail_h)) do
+        for i = pg.first, pg.last do
+            local line = lines[i]
+            if line.entry == entry then return p end
+            for __, e in ipairs(line.cells or {}) do
+                if e == entry then return p end
+            end
+        end
+    end
+    return nil
 end
 
 -- Cover URLs of a set of entries (for prefetching).

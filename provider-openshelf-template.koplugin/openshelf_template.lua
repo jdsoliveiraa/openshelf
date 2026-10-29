@@ -71,13 +71,20 @@ function P.search(query, limit, page, ctx)
     return P.parse(slice, ctx), #hits > first + limit - 1
 end
 
-function P.browse(key, limit, ctx)
+-- `page` (4th, optional) starts at 1; return has_more = true only when another
+-- page exists. A browse(key, limit, ctx) that returns entries alone still
+-- works: its "See all" just has no Load more (PROVIDERS.md §5.3).
+function P.browse(key, limit, ctx, page)
     if key ~= "picks" then return nil, "unknown shelf " .. tostring(key) end
+    page = page or 1
     local books = {}
     for __, book in ipairs(CATALOG) do
-        if wanted(book, ctx) and #books < limit then books[#books + 1] = book end
+        if wanted(book, ctx) then books[#books + 1] = book end
     end
-    return P.parse(books, ctx)
+    local first = (page - 1) * limit + 1
+    local slice = {}
+    for i = first, math.min(#books, first + limit - 1) do slice[#slice + 1] = books[i] end
+    return P.parse(slice, ctx), #books > first + limit - 1
 end
 
 function P.resolve(locator, _ctx)   -- ctx.settings would carry a token here

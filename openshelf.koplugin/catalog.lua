@@ -15,7 +15,7 @@ that are not UI:
   Catalog.resolve(entry)                      -> { url, headers } | nil, err
   Catalog.normalizeResolve(value, err)        -> the same, from a provider's raw return (pure)
   Catalog.shelves(stored)                     -> { {id="<provider id>:<key>", key, title, provider}, … }
-  Catalog.browse(shelf_id, limit)             -> entries | nil, err
+  Catalog.browse(shelf_id, limit, page)       -> entries, has_more | nil, err
   Catalog.group(entries)                      -> { {action, heading, items}, … }
 
 Built-ins are listed in openshelf_providers.lua and registered at load through
@@ -361,15 +361,19 @@ function Catalog.shelves(stored)
     return out
 end
 
---- Shelf id → stamped entries (nil, err on failure).
-function Catalog.browse(shelf_id, limit)
+--- Shelf id → stamped entries, has_more (nil, err on failure). `page`
+-- defaults to 1 (PROVIDERS.md §5.3). The provider's second return counts as
+-- has_more only when it is exactly `true`: a pre-#12 provider returns entries
+-- alone (or ignores `page`), so it reads as a single page.
+function Catalog.browse(shelf_id, limit, page)
+    page = page or 1
     for __, shelf in ipairs(Catalog.shelves()) do
         if shelf.id == shelf_id then
             local p = shelf.provider
-            local ok, entries, err = pcall(p.browse, shelf.key, limit, Catalog.ctxFor(p))
+            local ok, entries, more_or_err = pcall(p.browse, shelf.key, limit, Catalog.ctxFor(p), page)
             if not ok then return nil, tostring(entries) end
-            if not entries then return nil, err or "browse failed" end
-            return Catalog.stamp(p, entries)
+            if not entries then return nil, more_or_err or "browse failed" end
+            return Catalog.stamp(p, entries), more_or_err == true
         end
     end
     return nil, "unknown shelf " .. tostring(shelf_id)

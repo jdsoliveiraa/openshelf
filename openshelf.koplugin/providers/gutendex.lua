@@ -20,7 +20,17 @@ local P = {
 }
 
 local BASE = "https://gutendex.com/books/"
-local SHELF_QUERY = { popular = "?sort=popular", new = "?sort=descending" }
+local SHELF_QUERY = { popular = "sort=popular", new = "sort=descending" }
+
+-- Gutendex is fast only on URLs it has cached and can take a minute on
+-- others (2026-10-29: "?sort=popular" 0.06 s, "?sort=popular&page=2" 98 s,
+-- "?page=2&sort=popular" 15 s cold, then cached). So page 1 keeps the plain
+-- shelf URL and later pages use the exact shape of Gutendex's own `next`
+-- links, which every client following them warms.
+local function shelf_url(q, n)
+    if n == 1 then return BASE .. "?" .. q end
+    return BASE .. "?page=" .. n .. "&" .. q
+end
 
 local function first(t)
     return type(t) == "table" and t[1] or nil
@@ -51,8 +61,9 @@ function P.parse(data, limit, ctx)
 end
 
 -- Gutendex serves a fixed 32 rows per page; OpenShelf pages by `limit`
--- (10, 15 or 30). OpenShelf page N is result offsets [(N-1)*limit, N*limit),
--- so it spans one or two Gutendex pages; fetch those and slice.
+-- (10, 15 or 30 for search, 12 for shelves). OpenShelf page N is result
+-- offsets [(N-1)*limit, N*limit), so it spans one or two Gutendex pages;
+-- fetch those and slice.
 local GUTENDEX_PAGE = 32
 
 --- Rows of OpenShelf page `page` from `fetch(gutendex_page) → data, err`.
@@ -87,13 +98,16 @@ function P.search(query, limit, page, ctx)
     return entries, has_more
 end
 
-function P.browse(key, limit, ctx)
+-- Shelves page like search (PROVIDERS.md §5.3): page N of `limit` rows
+-- through the same Gutendex window, so "See all" shows every book once.
+function P.browse(key, limit, ctx, page)
     local q = SHELF_QUERY[key]
     if not q then return nil, "unknown shelf: " .. tostring(key) end
-    local data, err = ctx.http.getJSON(BASE .. q)
-    if not data then return nil, err end
-    local entries = P.parse(data, limit or 12, ctx)
-    return entries
+    limit = limit or 12
+    local rows, has_more = P.window(function(n) return ctx.http.getJSON(shelf_url(q, n)) end, limit, page or 1)
+    if not rows then return nil, has_more end
+    local entries = P.parse({ results = rows }, limit, ctx)
+    return entries, has_more
 end
 
 function P.resolve(locator)
