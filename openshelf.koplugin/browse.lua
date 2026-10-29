@@ -1,9 +1,11 @@
 --[[
-Browse shelves for the home screen (DESIGN.md §2.2, §3.6): Gutenberg "popular"
-and "new", cached on disk for 24 h, refreshed in a subprocess when stale.
+Browse shelves for the home screen (DESIGN.md §2.2, §3.6): every shelf a
+registered provider declares (Catalog.shelves(); Gutenberg "popular" and
+"new" today), cached on disk for 24 h under the shelf id
+"<provider id>:<key>", refreshed in a subprocess when stale.
 
-  local entries, stale = Browse.get("popular")  -- nil when nothing cached
-  Browse.refresh("popular", function(entries) … end)
+  local entries, stale = Browse.get("gutendex:popular")  -- nil when nothing cached
+  Browse.refresh("gutendex:popular", function(entries) … end)
 --]]
 local DataStorage = require("datastorage")
 local Catalog = require("catalog")
@@ -39,6 +41,7 @@ function Browse.refresh(kind, on_done)
     if inflight[kind] then return inflight[kind] end
     local size = Browse.SHELF_SIZE
     inflight[kind] = Jobs.run{
+        timeout = Jobs.DEADLINE,
         task = function()
             local entries, err = Catalog.browse(kind, size)
             if not entries then error(err or "browse failed", 0) end

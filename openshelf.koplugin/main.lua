@@ -76,6 +76,10 @@ end
 
 function OpenShelf:onOpenShelfOpen()
     if App.homeView() then return true end   -- already open
+    -- External providers: read lazily on every open, never in init() (plugin
+    -- instances are created in path order, so provider-* plugins register
+    -- after us). Each registration / file is taken once per process.
+    require("openshelf_external").open()
     local HomeView = require("view_home")
     UIManager:show(HomeView:new{ ui = self.ui })
     return true

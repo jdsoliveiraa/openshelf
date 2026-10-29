@@ -2,6 +2,7 @@
 std = "luajit"
 max_line_length = false
 files = { "openshelf.koplugin", "test" }
+exclude_files = { ".kohome", ".claude/**" }   -- emulator home: a symlinked second copy of the plugin
 -- Unused locals / args / loop vars whose name starts with "_" are deliberate
 -- throwaways (KOReader convention; `_` is also the gettext binding).
 ignore = { "21[1-3]/_.*" }

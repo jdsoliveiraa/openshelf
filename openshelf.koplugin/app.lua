@@ -51,6 +51,11 @@ function App.library()
         library = Library.new{
             load = function() return JsonFile.read(path) end,
             save = function(d) JsonFile.write(path, d) end,
+            -- v0.5 file: keep the original beside the rewritten one (decision 38)
+            backup = function(d)
+                JsonFile.write(path .. ".v1.bak", d)
+                logger.info("OpenShelf: library migrated to v2; v1 kept at", path .. ".v1.bak")
+            end,
         }
     end
     return library
@@ -108,6 +113,13 @@ function App.holdDownload(entry, view)
     local InfoMessage = require("ui/widget/infomessage")
     local NetworkMgr = require("ui/network/manager")
     local _ = require("gettext")
+    local Entry = require("entry")
+    -- Buy rows have nothing to download: hold opens the detail page with the
+    -- store URL + QR instead (decision 49).
+    if entry.action == Entry.ACTION.BUY then
+        if view and view.openDetail then view:openDetail(entry) end
+        return
+    end
     local st = App.bookStatus(entry)
     if st.downloaded then
         UIManager:show(InfoMessage:new{ text = _("Already on this device. Tap the book to open it."), timeout = 2 })

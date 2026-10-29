@@ -15,6 +15,7 @@ local Catalog = require("catalog")
 local Downloader = require("downloader")
 local Glyphs = require("glyphs")
 local Settings = require("settings")
+local SourceMenu = require("settings_source")
 local Version = require("openshelf_version")
 
 local SettingsMenu = {}
@@ -26,6 +27,28 @@ local function next_per_source()
         if n == cur then return choices[(i % #choices) + 1] end
     end
     return choices[1]
+end
+
+--- Sources -> Arrange sources (DESIGN.md §9.5, decision 44): the stock
+-- SortWidget over every registered source, enabled or not, in the current
+-- order. Saving stores the id list; slots, the filter dialog and home shelves
+-- read it through Settings.orderedProviders / Catalog.shelves.
+function SettingsMenu.arrange(on_saved)
+    local SortWidget = require("ui/widget/sortwidget")
+    local item_table = {}
+    for __, p in ipairs(Settings.orderedProviders()) do
+        item_table[#item_table + 1] = { text = p.name, id = p.id }
+    end
+    UIManager:show(SortWidget:new{
+        title = _("Arrange sources"),
+        item_table = item_table,
+        callback = function()
+            local ids = {}
+            for i, item in ipairs(item_table) do ids[i] = item.id end
+            Settings.setSourceOrder(ids)
+            if on_saved then on_saved() end
+        end,
+    })
 end
 
 function SettingsMenu.show(opts)
@@ -40,14 +63,22 @@ function SettingsMenu.show(opts)
     items = function()
         local t = {}
         t[#t + 1] = { text = _("Sources"), dim = true, select_enabled = false }
-        for __, name in ipairs(Catalog.providerNames()) do
-            local n = name
+        t[#t + 1] = {
+            text = "      " .. _("Arrange sources"),
+            callback = function() SettingsMenu.arrange(refresh) end,
+        }
+        for __, p in ipairs(Settings.orderedProviders()) do
+            t[#t + 1] = SourceMenu.row(p, refresh)   -- tap opens the source's submenu
+        end
+        -- Providers that failed to load or validate, or lost an id clash:
+        -- dimmed with the reason (PROVIDERS.md §8.5); tap shows it in full.
+        for __, inv in ipairs(Catalog.invalid()) do
+            local name, reason = tostring(inv.name or inv.id or "?"), tostring(inv.reason)
             t[#t + 1] = {
-                text = "      " .. n,
-                mandatory = Settings.isEnabled(n) and Glyphs.check or "",
+                text = "      " .. name .. " — " .. reason,
+                dim = true,
                 callback = function()
-                    Settings.toggle(n)
-                    refresh()
+                    UIManager:show(InfoMessage:new{ text = name .. "\n\n" .. reason })
                 end,
             }
         end
@@ -95,10 +126,12 @@ function SettingsMenu.show(opts)
         t[#t + 1] = {
             text = _("About OpenShelf"),
             callback = function()
+                local names = {}
+                for __, id in ipairs(Catalog.ids()) do names[#names + 1] = Catalog.nameOf(id) end
                 UIManager:show(InfoMessage:new{
                     text = T(_("OpenShelf %1\n\nSearch free & public-domain ebook catalogs and download them on-device.\n\nSources: %2\n\nBooks are saved to:\n%3\n\nOnly DRM-free, openly-licensed books are downloaded in-app."),
                         Version,
-                        table.concat(Catalog.providerNames(), ", "),
+                        table.concat(names, ", "),
                         Downloader.dirPath()),
                 })
             end,

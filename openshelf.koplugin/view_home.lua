@@ -216,26 +216,27 @@ function HomeView:homeRows()
         }), entries)
     end
 
-    -- Browse shelves (cached; refreshed in the background when stale)
-    for __, feed in ipairs(Catalog.BROWSE) do
-        local entries, stale = Browse.get(feed.key)
-        if (not entries or stale) and not self.browse_requested[feed.key] and NetworkMgr:isConnected() then
-            self.browse_requested[feed.key] = true
-            Browse.refresh(feed.key, function(res)
-                if not res then self.browse_failed[feed.key] = true end
+    -- Browse shelves declared by providers (cached under "<provider id>:<key>";
+    -- refreshed in the background when stale)
+    for __, shelf in ipairs(Catalog.shelves(Settings.sourceOrder())) do
+        local entries, stale = Browse.get(shelf.id)
+        if (not entries or stale) and not self.browse_requested[shelf.id] and NetworkMgr:isConnected() then
+            self.browse_requested[shelf.id] = true
+            Browse.refresh(shelf.id, function(res)
+                if not res then self.browse_failed[shelf.id] = true end
                 if self.mode == "home" then self:rebuild() end
             end)
         end
         if entries and #entries > 0 then
             add_shelf(Shelf.rows(self, {
-                title = feed.title, entries = entries, mark_downloaded = true,
-                on_see_all = function() self:openList(feed.title, entries) end,
+                title = shelf.title, entries = entries, mark_downloaded = true,
+                on_see_all = function() self:openList(shelf.title, entries) end,
                 on_tap = function(e) self:openDetail(e) end,
                 on_hold = function(e) App.holdDownload(e, self) end,
                 status = function(e) return App.bookStatus(e) end,
             }), entries)
-        elseif self.browse_requested[feed.key] and not self.browse_failed[feed.key] then
-            rows[#rows + 1] = Shelf.header(self, feed.title, nil)
+        elseif self.browse_requested[shelf.id] and not self.browse_failed[shelf.id] then
+            rows[#rows + 1] = Shelf.header(self, shelf.title, nil)
             local h = Screen:scaleBySize(36)
             rows[#rows + 1] = {
                 widget = P.row(self.screen_w, h, P.text(_("Loading…"), 14, { color = P.DARK_GRAY })),
@@ -290,13 +291,16 @@ function HomeView:statusLine()
     local n = #self.entries
     if self:isSearching() then
         if n > 0 then parts[#parts + 1] = T(_("%1 so far"), n) end
-        local pending = self.results and self.results:pending() or {}
+        local pending = {}
+        for i, id in ipairs(self.results and self.results:pending() or {}) do
+            pending[i] = Catalog.nameOf(id) or id
+        end
         parts[#parts + 1] = T(_("Searching %1…"), table.concat(pending, ", "))
     else
         parts[#parts + 1] = T(_("%1 results"), n)
     end
     if self.results then
-        local errs = self.results:errors()
+        local errs = self.results:errors(Catalog.nameOf)
         if #errs > 0 then parts[#parts + 1] = Glyphs.warning .. " " .. T(_("%1 failed"), #errs) end
     end
     if self.collapsed and self.collapsed > 0 then
@@ -308,7 +312,7 @@ end
 function HomeView:showStatusDetail()
     if not self.results then return end
     local lines = {}
-    local errs = self.results:errors()
+    local errs = self.results:errors(Catalog.nameOf)
     if #errs > 0 then
         lines[#lines + 1] = _("Sources that failed:") .. "\n" .. table.concat(errs, "\n")
     end
@@ -437,8 +441,8 @@ function HomeView:runSearch(query)
 end
 
 function HomeView:startSearch(query)
-    local names = Settings.enabledList(Catalog.providerNames())
-    if #names == 0 then
+    local ids = Settings.enabledIds(Settings.orderedProviders())
+    if #ids == 0 then
         UIManager:show(InfoMessage:new{ text = _("All sources are disabled. Enable one in settings.") })
         return
     end
@@ -450,7 +454,7 @@ function HomeView:startSearch(query)
     self.page = 1
     self.entries, self.collapsed, self.results = {}, 0, nil
     self.searcher = Searcher.new{
-        query = query, names = names, per_source = Settings.perSource(),
+        query = query, ids = ids, per_source = Settings.perSource(),
         on_update = function(results) self:onResults(results) end,
         on_complete = function(results) self:onResults(results) end,
     }
@@ -490,8 +494,12 @@ end
 
 function HomeView:openFilter()
     local FilterDialog = require("dialog_filter")
+    local sources = {}
+    for __, id in ipairs(Settings.enabledIds(Settings.orderedProviders())) do
+        sources[#sources + 1] = { id = id, name = Catalog.nameOf(id) or id }
+    end
     FilterDialog.show{
-        sources = Settings.enabledList(Catalog.providerNames()),
+        sources = sources,
         selected = self.filter.sources,
         format = self.filter.format,
         on_change = function(f)

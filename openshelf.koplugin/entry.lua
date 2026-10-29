@@ -8,10 +8,12 @@ at download time (Catalog.resolve → provider.resolve(locator)).
 
 Entry shape:
   {
-    title, author, source,          -- display
+    title, author,                  -- display
+    provider = "gutendex",          -- provider id: the key (slots, settings, Entry.id, library)
+    source   = "Project Gutenberg", -- provider display name, for labels only
     action  = Entry.ACTION.*,       -- download | borrow | buy
     format  = "epub" | "pdf",       -- display + download extension
-    quality = number,               -- higher wins when deduping editions
+    quality = number,               -- higher wins when deduping editions (provider's by default)
     dedup_key = string,             -- normalized title+author signature
     cover_url = string | nil,
     locator = { url = … } | { identifier = … },   -- provider-specific, JSON-safe
@@ -39,16 +41,6 @@ Entry.ACTION_GLYPH = {
     download = "download",
     borrow   = "book",
     buy      = "cart",
-}
-
--- Per-source quality rank. Higher = preferred when the same title appears in
--- several sources (prefer-best-edition). Standard Ebooks is listed ahead of
--- time for the planned authenticated-OPDS provider.
-Entry.QUALITY = {
-    ["Standard Ebooks"]   = 100,
-    ["Project Gutenberg"] = 80,
-    ["Internet Archive"]  = 60,
-    ["DOAB"]              = 50,
 }
 
 local ARTICLES = { ["the"] = true, ["a"] = true, ["an"] = true }
@@ -80,16 +72,34 @@ function Entry.makeKey(title, author)
     return norm_title(title) .. "|" .. author_sig(author)
 end
 
--- A locator's identity as a string (for "already downloaded" matching).
-function Entry.locatorKey(locator)
-    if type(locator) ~= "table" then return "" end
-    return locator.url or locator.identifier or ""
+local function usable(v)
+    return (type(v) == "string" and v ~= "") or type(v) == "number"
 end
 
--- Stable identity of an edition: source + locator. Two entries with the same
--- id are the same file, whatever search produced them.
+-- A locator's identity as a string (PROVIDERS.md §4.2): url, else identifier,
+-- else id, else every field sorted by name. "" when nothing is usable — the
+-- host drops such rows (Catalog.stamp).
+function Entry.locatorKey(locator)
+    if type(locator) ~= "table" then return "" end
+    for __, k in ipairs({ "url", "identifier", "id" }) do
+        if usable(locator[k]) then return tostring(locator[k]) end
+    end
+    local keys = {}
+    for k, v in pairs(locator) do
+        if type(k) == "string" and usable(v) then keys[#keys + 1] = k end
+    end
+    if #keys == 0 then return "" end
+    table.sort(keys)
+    local parts = {}
+    for i, k in ipairs(keys) do parts[i] = k .. "=" .. tostring(locator[k]) end
+    return table.concat(parts, ";")
+end
+
+-- Stable identity of an edition: provider id + locator (PROVIDERS.md §4.2).
+-- Two entries with the same id are the same file, whatever search produced
+-- them. Display names never key anything: they may change, ids may not.
 function Entry.id(entry)
-    return (entry.source or "?") .. "|" .. Entry.locatorKey(entry.locator)
+    return (entry.provider or "?") .. "|" .. Entry.locatorKey(entry.locator)
 end
 
 -- API JSON is decoded by KOReader's LuaJSON, which turns `null` into a
@@ -125,17 +135,20 @@ local function clean_alternates(list)
     return out
 end
 
--- Build a DOWNLOAD entry from provider data.
-function Entry.download(t)
+local ACTION_SET = {}
+for __, a in ipairs(Entry.ACTION_ORDER) do ACTION_SET[a] = true end
+
+local function build(t, action)
     local title = clean(t.title, 300) or "Untitled"
     local author = clean(t.author, 200) or "Unknown"
     return {
         title       = title,
         author      = author,
-        source      = clean(t.source, 60),
-        action      = Entry.ACTION.DOWNLOAD,
+        provider    = clean(t.provider, 32),   -- overwritten by the host (catalog.lua)
+        source      = clean(t.source, 60),     -- idem
+        action      = action,
         format      = clean(t.format, 8) or "epub",
-        quality     = tonumber(t.quality) or Entry.QUALITY[t.source] or 0,
+        quality     = tonumber(t.quality),     -- nil → the host fills in the provider's
         dedup_key   = Entry.makeKey(title, author),
         cover_url   = clean(t.cover, 1000),
         locator     = clean_locator(t.locator),
@@ -143,7 +156,21 @@ function Entry.download(t)
         description = clean(t.description, 4000),
         language    = clean(t.language, 16),
         year        = clean(t.year, 8),
+        price       = clean(t.price, 32),      -- buy rows only
     }
+end
+
+--- Build an entry from provider data (PROVIDERS.md §4.1). `action` is
+-- "download" (default), "borrow" or "buy"; anything else is a download.
+function Entry.new(t)
+    t = t or {}
+    local action = ACTION_SET[t.action] and t.action or Entry.ACTION.DOWNLOAD
+    return build(t, action)
+end
+
+--- `Entry.new` with action = "download".
+function Entry.download(t)
+    return build(t or {}, Entry.ACTION.DOWNLOAD)
 end
 
 return Entry

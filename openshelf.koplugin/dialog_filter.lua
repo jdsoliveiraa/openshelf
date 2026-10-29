@@ -17,12 +17,13 @@ local FORMATS = {
     { "pdf",  "PDF" },
 }
 
--- opts.sources (ordered list), opts.selected (set or nil = all), opts.format,
--- opts.on_change(filter) with filter = { sources = set|nil, format = string }
+-- opts.sources (ordered list of { id = provider id, name = display name }),
+-- opts.selected (set of ids, or nil = all), opts.format,
+-- opts.on_change(filter) with filter = { sources = id set|nil, format = string }
 function FilterDialog.show(opts)
     local selected = {}
-    for __, name in ipairs(opts.sources) do
-        selected[name] = (opts.selected == nil) or (opts.selected[name] == true)
+    for __, src in ipairs(opts.sources) do
+        selected[src.id] = (opts.selected == nil) or (opts.selected[src.id] == true)
     end
     local format = opts.format or "any"
     local dialog
@@ -30,8 +31,8 @@ function FilterDialog.show(opts)
     local function emit()
         local all = true
         local set = {}
-        for __, name in ipairs(opts.sources) do
-            if selected[name] then set[name] = true else all = false end
+        for __, src in ipairs(opts.sources) do
+            if selected[src.id] then set[src.id] = true else all = false end
         end
         opts.on_change({ sources = (not all) and set or nil, format = format })
     end
@@ -46,13 +47,13 @@ function FilterDialog.show(opts)
 
     build = function()
         local rows = {}
-        for __, name in ipairs(opts.sources) do
-            local n = name
+        for __, src in ipairs(opts.sources) do
+            local id = src.id
             rows[#rows + 1] = { {
-                text = (selected[n] and Glyphs.check or "    ") .. "   " .. n,
+                text = (selected[id] and Glyphs.check or "    ") .. "   " .. src.name,
                 align = "left",
                 callback = function()
-                    selected[n] = not selected[n]
+                    selected[id] = not selected[id]
                     reopen()
                 end,
             } }
@@ -73,7 +74,7 @@ function FilterDialog.show(opts)
             {
                 text = _("Reset"),
                 callback = function()
-                    for __, name in ipairs(opts.sources) do selected[name] = true end
+                    for __, src in ipairs(opts.sources) do selected[src.id] = true end
                     format = "any"
                     reopen()
                 end,

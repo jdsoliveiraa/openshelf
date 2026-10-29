@@ -2,6 +2,9 @@
 Rows for a page of book entries, as a list or a 3-column grid
 (DESIGN.md §2.3). Shared by the home screen's results mode and the "See all"
 lists. Pure layout: the caller supplies status lookups and tap/hold handlers.
+Entries are grouped by action (Catalog.group); a group header row appears
+only when more than one action is present, and paging keeps a header with
+the row that follows it.
 
   local rows, total_pages, page_entries = Pane.rows(view, entries, {
       mode = "list"|"grid", page = n, avail_h = px,
@@ -14,6 +17,7 @@ local VerticalGroup = require("ui/widget/verticalgroup")
 local Size = require("ui/size")
 local Screen = require("device").screen
 local _ = require("gettext")
+local Catalog = require("catalog")
 local Glyphs = require("glyphs")
 local Layout = require("layout")
 local P = require("uiparts")
@@ -66,7 +70,11 @@ function Pane.perPage(view, mode, avail_h)
 end
 
 local function meta_line(entry, st)
-    local meta = string.format("%s · %s", entry.source or "", (entry.format or "epub"):upper())
+    -- Source badge: the registry's current display name for the row's provider
+    -- id; a stored row from a provider no longer installed keeps its own label.
+    local label = Catalog.nameOf(entry.provider) or entry.source or ""
+    local meta = string.format("%s · %s", label, (entry.format or "epub"):upper())
+    if entry.price then meta = meta .. " · " .. entry.price end   -- buy rows
     if st.dl and st.dl.status == "queued" then
         meta = meta .. "  ·  " .. _("Queued")
     elseif st.missing then
@@ -170,38 +178,87 @@ function Pane.gridRow(view, entries, g, status, on_tap, on_hold)
     return { widget = P.box(view.screen_w, g.cell_h, group, "left"), h = g.cell_h, hits = hits }
 end
 
-function Pane.rows(view, entries, opts)
-    local rows = {}
-    local n = #entries
-    local page_entries = {}
-    if opts.mode == "grid" then
-        local g = Pane.gridGeometry(view, opts.avail_h)
-        local total = Layout.pageCount(n, g.per_page)
-        local page = math.max(1, math.min(opts.page or 1, total))
-        local first, last = Layout.pageRange(page, g.per_page, n)
-        local i = first
-        while i <= last do
-            local slice = {}
-            for j = i, math.min(i + g.cols - 1, last) do
-                slice[#slice + 1] = entries[j]
-                page_entries[#page_entries + 1] = entries[j]
+Pane.HEADER_H = Screen:scaleBySize(30)
+
+-- Group header: Nerd Font glyph + heading (DESIGN.md §2.3, no emoji).
+local function header_row(view, group)
+    local pad = Size.padding.default
+    local label = HorizontalGroup:new{
+        align = "center",
+        P.text(Glyphs[group.glyph] or "", 14, { color = P.DARK_GRAY }),
+        P.hspace(pad),
+        P.text(_(group.heading), 14, { bold = true, color = P.DARK_GRAY, max_width = view.screen_w - 3 * pad }),
+    }
+    return {
+        widget = P.row(view.screen_w, Pane.HEADER_H, label, { pad = pad }),
+        h = Pane.HEADER_H, hits = {}, keep_with_next = true,
+    }
+end
+
+-- One vertical unit of the pane: a group header, a list row's entry or a grid
+-- row's cells. Headers only when the entries span more than one action.
+local function build_lines(entries, mode, g)
+    local groups = Catalog.group(entries)
+    local lines = {}
+    for __, grp in ipairs(groups) do
+        if #groups > 1 then lines[#lines + 1] = { header = grp, h = Pane.HEADER_H } end
+        if mode == "grid" then
+            local i = 1
+            while i <= #grp.items do
+                local cells = {}
+                for j = i, math.min(i + g.cols - 1, #grp.items) do cells[#cells + 1] = grp.items[j] end
+                lines[#lines + 1] = { cells = cells, h = g.cell_h }
+                i = i + g.cols
             end
-            rows[#rows + 1] = Pane.gridRow(view, slice, g, opts.status, opts.on_tap, opts.on_hold)
-            i = i + g.cols
+        else
+            for ___, e in ipairs(grp.items) do lines[#lines + 1] = { entry = e, h = g.row_h } end
         end
-        return rows, total, page_entries
     end
-    local g = Pane.listGeometry(view)
-    local per = math.max(1, math.floor(opts.avail_h / g.row_h))
-    local total = Layout.pageCount(n, per)
+    return lines
+end
+
+-- Slice lines into pages of at most avail_h (a line always gets a page even
+-- when taller), keeping a header with the line that follows it.
+local function paginate(lines, avail_h)
+    local pages = {}
+    local i = 1
+    while i <= #lines do
+        local start_i, acc = i, 0
+        while i <= #lines do
+            local h = lines[i].h
+            if acc + h > avail_h and i > start_i then break end
+            acc = acc + h
+            i = i + 1
+        end
+        if i <= #lines and i - 1 > start_i and lines[i - 1].header then i = i - 1 end
+        pages[#pages + 1] = { first = start_i, last = i - 1 }
+    end
+    if #pages == 0 then pages[1] = { first = 1, last = 0 } end
+    return pages
+end
+
+function Pane.rows(view, entries, opts)
+    local mode = opts.mode == "grid" and "grid" or "list"
+    local g = mode == "grid" and Pane.gridGeometry(view, opts.avail_h) or Pane.listGeometry(view)
+    local lines = build_lines(entries, mode, g)
+    local pages = paginate(lines, opts.avail_h)
+    local total = #pages
     local page = math.max(1, math.min(opts.page or 1, total))
-    local first, last = Layout.pageRange(page, per, n)
-    for i = first, last do
-        local entry = entries[i]
-        page_entries[#page_entries + 1] = entry
-        rows[#rows + 1] = Pane.listRow(view, entry, g, opts.status(entry),
-            function() opts.on_tap(entry) end,
-            function() opts.on_hold(entry) end)
+    local rows, page_entries = {}, {}
+    for i = pages[page].first, pages[page].last do
+        local line = lines[i]
+        if line.header then
+            rows[#rows + 1] = header_row(view, line.header)
+        elseif line.cells then
+            for __, e in ipairs(line.cells) do page_entries[#page_entries + 1] = e end
+            rows[#rows + 1] = Pane.gridRow(view, line.cells, g, opts.status, opts.on_tap, opts.on_hold)
+        else
+            local entry = line.entry
+            page_entries[#page_entries + 1] = entry
+            rows[#rows + 1] = Pane.listRow(view, entry, g, opts.status(entry),
+                function() opts.on_tap(entry) end,
+                function() opts.on_hold(entry) end)
+        end
     end
     return rows, total, page_entries
 end

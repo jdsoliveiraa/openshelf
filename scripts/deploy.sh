@@ -52,12 +52,14 @@ echo "Deploying $NAME v$version to $HOST ..."
 scp -q -r "$NAME" "$HOST:$PLUGINS/$NAME.new"
 "${SSH[@]}" "cd $PLUGINS && rm -rf $NAME && mv $NAME.new $NAME && sync"
 
+# Top-level modules and one folder down (providers/*.lua): a truncated
+# built-in provider would otherwise pass and OpenShelf would fail to load.
 if command -v md5sum >/dev/null; then
-  local_sums="$(cd "$NAME" && md5sum -- *.lua | awk '{print $1, $2}' | sort -k2)"
+  local_sums="$(cd "$NAME" && md5sum -- *.lua */*.lua | awk '{print $1, $2}' | sort -k2)"
 else
-  local_sums="$(cd "$NAME" && md5 -r -- *.lua | awk '{print $1, $2}' | sort -k2)"
+  local_sums="$(cd "$NAME" && md5 -r -- *.lua */*.lua | awk '{print $1, $2}' | sort -k2)"
 fi
-remote_sums="$("${SSH[@]}" "cd $PLUGINS/$NAME && md5sum *.lua" | awk '{print $1, $2}' | sort -k2)"
+remote_sums="$("${SSH[@]}" "cd $PLUGINS/$NAME && md5sum *.lua */*.lua" | awk '{print $1, $2}' | sort -k2)"
 
 if [ "$local_sums" != "$remote_sums" ]; then
   echo "CHECKSUM MISMATCH between local and device:" >&2

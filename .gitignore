@@ -12,3 +12,6 @@
 /tmp/
 *.epub
 .kohome/
+
+# Agent worktrees (Claude Code)
+.claude/worktrees/

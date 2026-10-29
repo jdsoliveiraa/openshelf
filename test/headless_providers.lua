@@ -71,9 +71,13 @@ hr()
 
 print("providers registered: " .. #Catalog.providers)
 for i, p in ipairs(Catalog.providers) do
-    assert(type(p) == "table" and type(p.search) == "function",
+    assert(type(p) == "table" and type(p.search) == "function" and p.api == 1,
         "provider #" .. i .. " invalid (regression!)")
-    print(("  %d. %-18s (quality %s)"):format(i, p.name, require("entry").QUALITY[p.name] or "?"))
+    print(("  %d. %-18s id=%-16s quality %s"):format(i, p.name, p.id, tostring(p.quality)))
+end
+if #Catalog.invalid() > 0 then
+    fail = true
+    for _, inv in ipairs(Catalog.invalid()) do print("  ! REJECTED " .. tostring(inv.name) .. ": " .. inv.reason) end
 end
 hr()
 
@@ -116,12 +120,16 @@ hr()
 for _, src in ipairs(order) do
     local r = by_source[src][1]
     assert(type(r.locator) == "table" and r.resolve == nil, "entries must be plain data with a locator")
-    local url, err = Catalog.resolve(r)
-    if url then
+    assert(type(r.provider) == "string" and r.source == src, "rows must carry the host-stamped provider id and source")
+    local resolved, err = Catalog.resolve(r)
+    if resolved then
+        assert(type(resolved) == "table" and type(resolved.url) == "string",
+            "Catalog.resolve must return { url, headers }")
+        local url = resolved.url
         print(("resolve OK   [%s] -> %s"):format(src, url))
         if src == "Internet Archive" then
             -- lending-library items answer 401; a free EPUB must HEAD 200 (v0.4.2)
-            local headers, herr = HttpUtil.head(url)
+            local headers, herr = HttpUtil.head(url, { headers = resolved.headers })
             if headers then
                 print(("HEAD OK      [%s] content-length=%s"):format(src, tostring(headers["content-length"])))
             else
@@ -140,10 +148,10 @@ hr()
 local function try_download(src)
     local r = by_source[src] and by_source[src][1]
     if not r then print(("download SKIP [%s] (no result)"):format(src)); return end
-    local url, rerr = Catalog.resolve(r)
-    if not url then print(("download SKIP [%s] (resolve: %s)"):format(src, rerr)); return end
+    local resolved, rerr = Catalog.resolve(r)
+    if not resolved then print(("download SKIP [%s] (resolve: %s)"):format(src, rerr)); return end
     local target = os.tmpname()
-    local path, derr = HttpUtil.download(url, target)
+    local path, derr = HttpUtil.download(resolved.url, target, { headers = resolved.headers })
     if not path then
         fail = true
         print(("download FAIL [%s] -> %s"):format(src, tostring(derr)))
@@ -191,15 +199,88 @@ hr()
 
 -- Internet Archive: punctuation in the query must not break the Lucene syntax
 -- (before v0.4 a stray ":" or "(" silently produced zero results).
-local IA = require("providers_internetarchive")
+local IA = require("providers/internetarchive")
 local tricky = "dr. jekyll (and) mr: hyde"
 print(("IA sanitizeQuery: %q -> %q"):format(tricky, tostring(IA.sanitizeQuery(tricky))))
-local ia_res, ia_err = IA.search(tricky, 5)
+local ia_res, ia_err = Catalog.searchOne("internetarchive", tricky, 5, 1)
 if ia_res and #ia_res > 0 then
     print(("IA punctuation query OK   -> %d result(s), first: %s"):format(#ia_res, ia_res[1].title))
 else
     fail = true
     print("IA punctuation query FAIL -> " .. tostring(ia_err or "0 results"))
+end
+hr()
+
+-- opts.headers (PROVIDERS.md §3): merged over the User-Agent on GET, HEAD and
+-- download, which is how a provider's resolve() can hand the host an
+-- Authorization header (§5.2). httpbin echoes request headers and has a
+-- bearer endpoint that answers 401 unless the token is sent.
+do
+    local HB = "https://httpbin.org"
+    local echo, eerr = HttpUtil.getJSON(HB .. "/headers", { headers = { ["X-OpenShelf-Test"] = "yes" } })
+    local got = echo and echo.headers or {}
+    if got["X-Openshelf-Test"] == "yes" and tostring(got["User-Agent"]):match("^OpenShelf/") then
+        print(("headers OK   -> custom header echoed, UA still %s"):format(got["User-Agent"]))
+    else
+        fail = true
+        print(("headers FAIL -> err=%s custom=%s ua=%s"):format(tostring(eerr),
+            tostring(got["X-Openshelf-Test"]), tostring(got["User-Agent"])))
+    end
+    local auth = { headers = { Authorization = "Bearer openshelf-test" } }
+    local anon, aerr = HttpUtil.getJSON(HB .. "/bearer")
+    local bearer, berr = HttpUtil.getJSON(HB .. "/bearer", auth)
+    if anon == nil and bearer and bearer.authenticated == true and bearer.token == "openshelf-test" then
+        print(("bearer OK    -> 401 without the header (%s), authenticated with it"):format(tostring(aerr)))
+    else
+        fail = true
+        print(("bearer FAIL  -> anon=%s/%s auth=%s/%s"):format(tostring(anon), tostring(aerr),
+            tostring(bearer), tostring(berr)))
+    end
+    local hh, hherr = HttpUtil.head(HB .. "/bearer", auth)
+    local len = HttpUtil.contentLength(HB .. "/bearer", auth)
+    if hh and HttpUtil.head(HB .. "/bearer") == nil and type(len) == "number" then
+        print(("HEAD auth OK -> content-length=%d with the header, refused without"):format(len))
+    else
+        fail = true
+        print(("HEAD auth FAIL -> %s / %s len=%s"):format(tostring(hh), tostring(hherr), tostring(len)))
+    end
+    local target = os.tmpname()
+    local path, derr = HttpUtil.download(HB .. "/bearer", target, auth)
+    local body = ""
+    if path then local f = io.open(path, "rb"); body = f:read("*a"); f:close() end
+    os.remove(target)
+    local anon_path = HttpUtil.download(HB .. "/bearer", target)
+    os.remove(target)
+    if path and body:find('"authenticated": true', 1, true) and anon_path == nil then
+        print(("download auth OK -> %d bytes with the header, refused without"):format(#body))
+    else
+        fail = true
+        print(("download auth FAIL -> path=%s err=%s anon=%s body=%s"):format(tostring(path),
+            tostring(derr), tostring(anon_path), body:sub(1, 80)))
+    end
+    -- Redirects: provider headers survive a same-host hop but never follow a
+    -- redirect to another host. httpbin refuses off-site redirect-to, so the
+    -- cross-host hop is postman-echo -> httpbin (which echoes what it got).
+    local esc = function(s) return (s:gsub("[^%w]", function(c) return ("%%%02X"):format(c:byte()) end)) end
+    local same = HttpUtil.getJSON(HB .. "/redirect-to?url=" .. esc("/headers"), auth)
+    local same_auth = same and same.headers and same.headers.Authorization
+    local OFFSITE = "https://postman-echo.com/redirect-to?url=" .. esc(HB .. "/headers")
+    local cross = HttpUtil.getJSON(OFFSITE, auth)
+    local cross_h = cross and cross.headers or {}
+    local dl = os.tmpname()
+    local dl_path = HttpUtil.download(OFFSITE, dl, auth)
+    local dl_body = ""
+    if dl_path then local f = io.open(dl_path, "rb"); dl_body = f:read("*a"); f:close() end
+    os.remove(dl)
+    if same_auth == "Bearer openshelf-test" and cross and cross_h.Authorization == nil
+        and tostring(cross_h["User-Agent"]):match("^OpenShelf/")
+        and dl_body:find('"User-Agent"', 1, true) and not dl_body:lower():find("authorization", 1, true) then
+        print("redirect OK  -> auth kept on same-host hop, dropped on cross-host (GET and download)")
+    else
+        fail = true
+        print(("redirect FAIL -> same=%s cross_auth=%s cross_ua=%s dl=%s"):format(tostring(same_auth),
+            tostring(cross_h.Authorization), tostring(cross_h["User-Agent"]), dl_body:sub(1, 120)))
+    end
 end
 hr()
 

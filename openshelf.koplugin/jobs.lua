@@ -13,8 +13,14 @@ jobs can run at once and views stay fully interactive.
       on_done  = function(result) end,         -- parent, on success
       on_error = function(err) end,            -- parent, on failure/no result
       interval = 0.2,                          -- poll period (seconds)
+      timeout  = Jobs.DEADLINE,                -- seconds; nil = no deadline (downloads)
   }
   h:cancel()   -- kills the child; callbacks are not called
+
+Deadline (DESIGN.md §9.6, decision 45): when `timeout` elapses the child is
+killed and reaped and on_error("timed out") runs — the slot then reads
+"<source>: timed out". Subprocess mode only: inline mode cannot interrupt a
+blocking call, so it ignores the field by design.
 
 If fork is unavailable the task runs inline (blocking) so the feature still works.
 --]]
@@ -24,6 +30,10 @@ local JSON = require("json")
 local logger = require("logger")
 
 local Jobs = {}
+
+-- Shared deadline for search / browse / resolve / check jobs (seconds).
+Jobs.DEADLINE = 60
+Jobs.TIMED_OUT = "timed out"
 
 -- Inline mode runs every task in-process (blocking, deferred one tick).
 -- On the macOS emulator a forked child of the Cocoa/SDL process dies as soon
@@ -101,9 +111,16 @@ function Jobs.run(spec)
     local interval = spec.interval or 0.2
 
     -- Reap a child that is still exiting (or was killed) so it never lingers
-    -- as a zombie; drain its pipe so a blocked write() can finish.
+    -- as a zombie; drain its pipe so a blocked write() can finish, and close
+    -- our end once the child is gone (reading hits EOF at once then).
     local function collect()
-        if ffiutil.isSubProcessDone(pid) then return end
+        if ffiutil.isSubProcessDone(pid) then
+            if handle.fd then
+                ffiutil.readAllFromFD(handle.fd)
+                handle.fd = nil
+            end
+            return
+        end
         if handle.fd and ffiutil.getNonBlockingReadSize(handle.fd) ~= 0 then
             ffiutil.readAllFromFD(handle.fd)
             handle.fd = nil
@@ -111,7 +128,7 @@ function Jobs.run(spec)
         UIManager:scheduleIn(2, collect)
     end
 
-    local poll
+    local poll, expire
     poll = function()
         if handle.cancelled then return end
         local finished = ffiutil.isSubProcessDone(pid)
@@ -129,6 +146,7 @@ function Jobs.run(spec)
         end
         if not finished then UIManager:scheduleIn(1, collect) end
         handle.done = true
+        if expire then UIManager:unschedule(expire) end
         local ok, msg = pcall(JSON.decode, str)
         if ok and type(msg) == "table" and msg.ok then
             if spec.on_done then spec.on_done(msg.result) end
@@ -140,10 +158,25 @@ function Jobs.run(spec)
     end
     UIManager:scheduleIn(interval, poll)
 
+    -- Deadline: stop polling, kill the child (reaped by collect) and report.
+    if spec.timeout then
+        expire = function()
+            if handle.done or handle.cancelled then return end
+            handle.done = true
+            UIManager:unschedule(poll)
+            ffiutil.terminateSubProcess(pid)
+            UIManager:scheduleIn(1, collect)
+            logger.warn("OpenShelf: job timed out after", spec.timeout, "s, killed pid", pid)
+            if spec.on_error then spec.on_error(Jobs.TIMED_OUT) end
+        end
+        UIManager:scheduleIn(spec.timeout, expire)
+    end
+
     function handle.cancel(h)
         if h.done or h.cancelled then return end
         h.cancelled = true
         UIManager:unschedule(poll)
+        if expire then UIManager:unschedule(expire) end
         ffiutil.terminateSubProcess(pid)
         UIManager:scheduleIn(1, collect)
     end

@@ -7,12 +7,16 @@ lending-library items (`access-restricted-item`) list an EPUB too, but the
 file answers 401 without an archive.org login, so they are excluded (v0.4.2).
 Results are sorted by download count: IA's relevance ranking surfaces fan
 fiction and scripts above real editions of popular titles.
---]]
-local HttpUtil = require("http_util")
-local Entry = require("entry")
-local url_escape = require("socket.url").escape
 
-local InternetArchive = { name = "Internet Archive" }
+Contract: PROVIDERS.md (api 1). Everything from the host arrives in `ctx`;
+this file must not require() any OpenShelf module.
+--]]
+local P = {
+    api     = 1,
+    id      = "internetarchive",
+    name    = "Internet Archive",
+    quality = 60,
+}
 
 local function first(value)
     if type(value) == "table" then return value[1] end
@@ -26,7 +30,7 @@ local LUCENE_SPECIALS = "[%+%-&|!%(%){}%[%]%^\"~%*%?:\\/]"
 --- Make free text safe to embed in the advancedsearch query.
 -- Lowercasing also defuses the AND / OR / NOT operators. Returns nil when
 -- nothing searchable is left.
-function InternetArchive.sanitizeQuery(query)
+function P.sanitizeQuery(query)
     local q = (query or ""):lower():gsub(LUCENE_SPECIALS, " ")
     q = q:gsub("%s+", " "):gsub("^%s+", ""):gsub("%s+$", "")
     if q == "" then return nil end
@@ -35,13 +39,13 @@ end
 
 --- True when an advancedsearch doc or a metadata block marks the item as
 -- borrow-only (the field arrives as the string "true", sometimes a boolean).
-function InternetArchive.isRestricted(fields)
+function P.isRestricted(fields)
     local v = type(fields) == "table" and fields["access-restricted-item"]
     return v == true or (type(v) == "string" and v:lower() == "true")
 end
 
 --- Full Lucene query for a sanitized free-text string.
-function InternetArchive.buildQuery(clean)
+function P.buildQuery(clean)
     return string.format(
         "(%s) AND mediatype:texts AND format:(EPUB) AND NOT access-restricted-item:true",
         clean)
@@ -50,7 +54,7 @@ end
 local RESTRICTED_MSG = "borrow-only on the Internet Archive (needs an archive.org login)"
 
 --- Pure: advancedsearch response → entries, has_more.
-function InternetArchive.parse(data, limit, page)
+function P.parse(data, limit, page, ctx)
     limit = limit or 20
     page = page or 1
     local resp = data.response or {}
@@ -59,12 +63,11 @@ function InternetArchive.parse(data, limit, page)
     for __, doc in ipairs(docs) do
         local identifier = doc.identifier
         -- second line of defence should the index lag behind the flag
-        if identifier and not InternetArchive.isRestricted(doc) then
+        if type(identifier) == "string" and not P.isRestricted(doc) then
             local date = first(doc.date)
-            results[#results + 1] = Entry.download{
+            results[#results + 1] = ctx.Entry.new{
                 title       = first(doc.title) or identifier,
-                author      = first(doc.creator) or "Unknown",
-                source      = InternetArchive.name,
+                author      = first(doc.creator),
                 cover       = "https://archive.org/services/img/" .. identifier,
                 locator     = { identifier = identifier },
                 description = first(doc.description),
@@ -78,12 +81,12 @@ function InternetArchive.parse(data, limit, page)
     return results, has_more
 end
 
-function InternetArchive.search(query, limit, page)
+function P.search(query, limit, page, ctx)
     limit = limit or 20
     page = page or 1
-    local clean = InternetArchive.sanitizeQuery(query)
+    local clean = P.sanitizeQuery(query)
     if not clean then return {}, false end
-    local q = url_escape(InternetArchive.buildQuery(clean))
+    local q = ctx.url_escape(P.buildQuery(clean))
     local url = string.format(
         "https://archive.org/advancedsearch.php?q=%s"
         .. "&fl[]=identifier&fl[]=title&fl[]=creator&fl[]=description"
@@ -92,25 +95,25 @@ function InternetArchive.search(query, limit, page)
         .. "&rows=%d&page=%d&output=json",
         q, limit, page)
 
-    local data, err = HttpUtil.getJSON(url)
+    local data, err = ctx.http.getJSON(url)
     if not data then return nil, err end
-    return InternetArchive.parse(data, limit, page)
+    return P.parse(data, limit, page, ctx)
 end
 
 --- Locator → EPUB URL via the item's metadata (one request).
-function InternetArchive.resolve(locator)
+function P.resolve(locator, ctx)
     local identifier = type(locator) == "table" and locator.identifier
-    if not identifier then return nil, "no Internet Archive identifier" end
-    local meta = HttpUtil.getJSON("https://archive.org/metadata/" .. identifier)
-    if not meta or not meta.files then
+    if type(identifier) ~= "string" then return nil, "no Internet Archive identifier" end
+    local meta = ctx.http.getJSON("https://archive.org/metadata/" .. identifier)
+    if not meta or type(meta.files) ~= "table" then
         return nil, "no metadata for item"
     end
-    if InternetArchive.isRestricted(meta.metadata) then
+    if P.isRestricted(meta.metadata) then
         return nil, RESTRICTED_MSG
     end
     local epub
     for __, file in ipairs(meta.files) do
-        local fname = file.name or ""
+        local fname = type(file.name) == "string" and file.name or ""
         if fname:lower():match("%.epub$") then
             epub = fname
             break
@@ -120,7 +123,7 @@ function InternetArchive.resolve(locator)
         return nil, "no EPUB available in this item"
     end
     return string.format("https://archive.org/download/%s/%s",
-        identifier, url_escape(epub))
+        identifier, ctx.url_escape(epub))
 end
 
-return InternetArchive
+return P

@@ -141,41 +141,69 @@ start_next = function()
     cleanup(part, sizefile)
 
     active = { entry = entry, id = item.id, part = part, sizefile = sizefile, done = 0 }
-    active.job = Jobs.run{
-        interval = 0.5,
+    local this = active
+
+    local function fail(err)
+        cleanup(part, sizefile)
+        finish("error", entry, { err = err })
+    end
+
+    -- Phase 2: the transfer, exempt from the deadline (decision 45) — it
+    -- streams with progress and has its own socket timeouts. The resolved
+    -- headers (e.g. Authorization) go with the Content-Length HEAD and the GET.
+    local function download(resolved)
+        local url, headers = resolved.url, resolved.headers
+        this.job = Jobs.run{
+            interval = 0.5,
+            task = function()
+                local total = HttpUtil.contentLength(url, { headers = headers })
+                if total then
+                    local f = io.open(sizefile, "wb")
+                    if f then f:write(tostring(total)); f:close() end
+                end
+                local ok, derr = HttpUtil.download(url, part, { headers = headers })
+                if not ok then error(derr or "download failed", 0) end
+                local size = lfs.attributes(part, "size") or 0
+                if size == 0 then error("empty file received", 0) end
+                return { size = size, total = total }
+            end,
+            on_done = function(result)
+                os.remove(target)
+                local renamed = os.rename(part, target)
+                os.remove(sizefile)
+                if not renamed then
+                    fail("could not move the file into place")
+                    return
+                end
+                if Downloader.on_complete then
+                    local ok, err = pcall(Downloader.on_complete, entry, target)
+                    if not ok then logger.warn("OpenShelf: on_complete failed", err) end
+                end
+                finish("done", entry, { path = target, size = result and result.size })
+            end,
+            on_error = fail,
+        }
+    end
+
+    -- Phase 1: resolve the locator in its own job so the 60 s deadline covers
+    -- the provider's call but never the transfer. Catalog.resolve returns
+    -- plain data ({ url, headers }) that crosses the job pipe as JSON.
+    this.job = Jobs.run{
+        timeout = Jobs.DEADLINE,
         task = function()
-            local url, err = Catalog.resolve(entry)
-            if not url then error(err or "could not resolve a download URL", 0) end
-            local total = HttpUtil.contentLength(url)
-            if total then
-                local f = io.open(sizefile, "wb")
-                if f then f:write(tostring(total)); f:close() end
-            end
-            local ok, derr = HttpUtil.download(url, part)
-            if not ok then error(derr or "download failed", 0) end
-            local size = lfs.attributes(part, "size") or 0
-            if size == 0 then error("empty file received", 0) end
-            return { size = size, total = total }
+            local resolved, err = Catalog.resolve(entry)
+            if not resolved then error(err or "could not resolve a download URL", 0) end
+            return resolved
         end,
-        on_done = function(result)
-            os.remove(target)
-            local renamed = os.rename(part, target)
-            os.remove(sizefile)
-            if not renamed then
-                cleanup(part, sizefile)
-                finish("error", entry, { err = "could not move the file into place" })
+        on_done = function(resolved)
+            if active ~= this then return end
+            if type(resolved) ~= "table" or type(resolved.url) ~= "string" then
+                fail("could not resolve a download URL")
                 return
             end
-            if Downloader.on_complete then
-                local ok, err = pcall(Downloader.on_complete, entry, target)
-                if not ok then logger.warn("OpenShelf: on_complete failed", err) end
-            end
-            finish("done", entry, { path = target, size = result and result.size })
+            download(resolved)
         end,
-        on_error = function(err)
-            cleanup(part, sizefile)
-            finish("error", entry, { err = err })
-        end,
+        on_error = fail,
     }
     notify("start", entry, Downloader.state(entry))
     UIManager:scheduleIn(TICK, tick)
@@ -185,6 +213,12 @@ end
 -- Queue API
 ---------------------------------------------------------------------------
 function Downloader.enqueue(entry)
+    if entry.action == Entry.ACTION.BUY then
+        -- Decision 49: a buy row's locator is a web page; the detail view
+        -- shows it as text + QR. It is never resolved, never downloaded.
+        logger.warn("OpenShelf: refusing to download a buy row", entry.title)
+        return false, "buy rows are never downloaded"
+    end
     if Downloader.isBusy(entry) then return false end
     queue[#queue + 1] = { entry = entry, id = Entry.id(entry) }
     notify("queued", entry, Downloader.state(entry))

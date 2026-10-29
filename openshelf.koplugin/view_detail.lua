@@ -3,6 +3,10 @@ Book detail page (DESIGN.md §2.4): large cover, title, author, one metadata
 line (only what the provider returned), scrollable description, and the
 primary action — Download → progress with Cancel → Open / Done. Opens over
 the results, which survive underneath.
+
+Borrow rows run the same pipeline behind a "Borrow" button; buy rows
+(decision 49) show the store page as text plus a QR code (KOReader's
+QRMessage) and never download — the price joins the metadata line.
 --]]
 local ConfirmBox = require("ui/widget/confirmbox")
 local HorizontalGroup = require("ui/widget/horizontalgroup")
@@ -76,6 +80,7 @@ local function meta_text(e)
     parts[#parts + 1] = (e.format or "epub"):upper()
     if e.language then parts[#parts + 1] = e.language end
     if e.year then parts[#parts + 1] = e.year end
+    if e.price then parts[#parts + 1] = e.price end   -- buy rows (PROVIDERS.md §4.3)
     return table.concat(parts, "  ·  ")
 end
 
@@ -165,12 +170,19 @@ function DetailView:actionRow(st)
         end } }
     else
         local label, cb, hold
-        if st.downloaded then
+        if e.action == Entry.ACTION.BUY then
+            -- nothing to download: the QR carries the store page
+            label = _("Show QR code")
+            cb = function() self:showQR() end
+        elseif st.downloaded then
             label = _("Open")
             cb = function() App.openBook(st.path) end
             hold = function() self:confirmRedownload() end
         elseif st.missing then
             label = _("Download again")
+            cb = function() self:startDownload() end
+        elseif e.action == Entry.ACTION.BORROW then
+            label = _("Borrow")
             cb = function() self:startDownload() end
         else
             label = _("Download")
@@ -205,13 +217,44 @@ function DetailView:actionRow(st)
     }
 end
 
-function DetailView:buildRows()
-    local st = App.bookStatus(self.entry)
-    self.status = st
-    local rows = { self:headerRow(st) }
-    rows[#rows + 1] = self:actionRow(st)
+-- Buy rows (decision 49): the store page as text under the button; tapping
+-- it shows the same URL as a QR code to scan with a phone.
+function DetailView:buyUrl()
+    local loc = self.entry.locator
+    if type(loc) == "table" and type(loc.url) == "string" and loc.url ~= "" then return loc.url end
+    return nil
+end
 
-    local used = rows[1].h + rows[2].h
+function DetailView:buyRow()
+    local w, pad = self.screen_w, Size.padding.large
+    local url = self:buyUrl()
+    local text = url and (_("Buy at") .. "  " .. url) or _("The store did not provide a link.")
+    local box = TextBoxWidget:new{ text = text, face = P.face(14), fgcolor = P.DARK_GRAY, width = w - 2 * pad }
+    local h = box:getSize().h + 2 * Size.padding.default
+    return {
+        widget = P.row(w, h, box, { pad = pad }),
+        h = h,
+        hits = url and { { on_tap = function() self:showQR() end } } or {},
+    }
+end
+
+function DetailView:showQR()
+    local url = self:buyUrl()
+    if not url then return end
+    local QRMessage = require("ui/widget/qrmessage")
+    UIManager:show(QRMessage:new{ title = self.entry.title or "", text = url })
+end
+
+function DetailView:buildRows()
+    local e = self.entry
+    -- Buy rows never reach the downloader, so they carry no download state.
+    local st = e.action == Entry.ACTION.BUY and {} or App.bookStatus(e)
+    self.status = st
+    local rows = { self:headerRow(st), self:actionRow(st) }
+    if e.action == Entry.ACTION.BUY then rows[#rows + 1] = self:buyRow() end
+
+    local used = 0
+    for __, r in ipairs(rows) do used = used + r.h end
     local pad = Size.padding.large
     local desc_h = self.content_h - used
     if desc_h > Screen:scaleBySize(48) then
