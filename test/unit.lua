@@ -2121,7 +2121,7 @@ local a = { title = "Lit 101", parent = root }
 local b = { title = "Week 1", parent = a }
 local function titles(list)
     local t = {}
-    for i, v in ipairs(list) do t[i] = v.title end
+    for i, fv in ipairs(list) do t[i] = fv.title end
     return table.concat(t, ",")
 end
 eq(titles(Folders.ancestors(b)), "Courses,Lit 101", "two levels down -> root, then the nearest")
