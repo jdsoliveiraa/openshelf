@@ -90,7 +90,8 @@ Behaviour:
 - Leaving the results screen **kills in-flight provider subprocesses**; rows
   already shown stay until you leave.
 - The "downloaded" ✓ marks the **exact edition** (same source + locator), not
-  any edition of the same work.
+  any edition of the same work. (From v0.8.0: a file at the entry's target,
+  §12.8.)
 
 ### 2.4 Detail
 Opens **over** results (results survive). Title bar: back · title · X.
@@ -228,7 +229,7 @@ their covers (data kept; 24 h is the refresh age, §12.6). Refresh runs in a sub
 | 31 | Browse data: disk cache, 24 h TTL, background refresh (data kept; 24 h = refresh age, §12.6) |
 | 32 | Hold-to-download progress drawn on the row/cell |
 | 33 | Download queue, one at a time |
-| 34 | List default; ✓ = exact edition; no landscape design; title-bar icon layout |
+| 34 | List default; ✓ = exact edition (from v0.8.0: a file at the entry's target, §12.8); no landscape design; title-bar icon layout |
 | 35 | Leaving results kills subprocesses; sidecar reading status; Collection name; hide missing metadata |
 | 36 | Emulator built from source, `kodev run -s kobo-clara` |
 | 37 | Providers are modular: in-tree, `provider-openshelf-*.koplugin` via KOReader's Provider registry, drop-in files under `<settings>/openshelf/providers` |
