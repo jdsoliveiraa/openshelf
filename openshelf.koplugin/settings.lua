@@ -136,6 +136,18 @@ function Settings.homeShelves()
     return out
 end
 
+-- Home's Browse chips (DESIGN.md §12.3, decision 71), in source order: the
+-- roots of api-2 sources that are enabled and not in Needs setup. No toggle.
+function Settings.browseRoots()
+    local shown = {}
+    for __, id in ipairs(Settings.enabledIds(Settings.orderedProviders())) do shown[id] = true end
+    local out = {}
+    for __, r in ipairs(Catalog.roots(Settings.sourceOrder())) do
+        if shown[r.provider.id] then out[#out + 1] = r end
+    end
+    return out
+end
+
 ---------------------------------------------------------------------------
 -- Per-provider settings: provider_settings[id] = { key = value }, the raw
 -- values the user saved (plain text, PROVIDERS.md §7). The provider's field

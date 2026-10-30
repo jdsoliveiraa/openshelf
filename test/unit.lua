@@ -2076,6 +2076,104 @@ eq(in201[1] and table.concat(in201[1].path, "/"), "Literature 201/Week 1", "…w
 check(demo.search_in({ folder = "nope" }, "pride", 10, 1, dctx) == nil, "search_in on an unknown folder fails")
 end)()
 
+print("== Folders: views, pure parts (#17, DESIGN.md 12.3-12.5) ==")
+;(function()
+local ShelfPager = require("shelf_pager")
+local Folders = require("openshelf_folders")
+local function api2(over)
+    local p = { api = 2, search = function() return {}, false end,
+        resolve = function(loc) return loc.url end }
+    for k, val in pairs(over) do p[k] = val end
+    return p
+end
+
+-- A folder view starts with nothing loaded: page 1 is its first fetch.
+local pg = ShelfPager.new{ page = 0, has_more = true }
+eq(#pg.entries, 0, "a folder pager starts empty")
+eq(pg.page, 0, "…with no page loaded")
+eq(pg:begin(), 1, "its first fetch is page 1")
+pg:fail("offline")
+eq(pg.page, 0, "a failed first page leaves nothing loaded")
+eq(pg:begin(), 1, "Retry asks for page 1 again")
+eq(pg:append({ { title = "A", locator = { url = "https://f/a" } } }, true), 1, "page 1 appended")
+eq(pg.page, 1, "page 1 loaded")
+eq(pg:begin(), 2, "then Load more asks for page 2")
+local seeded = ShelfPager.new{ entries = { { title = "B", locator = { url = "https://f/b" } } } }
+eq(seeded.page, 1, "a pager seeded with entries still starts at page 1 (See all)")
+
+eq(Folders.PAGE_SIZE, 50, "folder views list 50 rows per page")
+
+-- Second line of a folder row: subtitle, else path (not inside folder views), else nothing.
+local sub = Entry.folder{ title = "Lab01", locator = { folder = 1 }, subtitle = "3 subfolders", path = { "SS", "T" } }
+eq(Folders.secondLine(sub, false), "3 subfolders", "subtitle wins")
+eq(Folders.secondLine(sub, true), "3 subfolders", "…inside folder views too")
+local pathed = Entry.folder{ title = "Lab01", locator = { folder = 2 }, path = { "Software Seguro", "T" } }
+eq(Folders.secondLine(pathed, false), "Software Seguro › T", "else the path joined with ›")
+eq(Folders.secondLine(pathed, true), "", "never the path inside a folder view (it repeats the title bar)")
+eq(Folders.secondLine(Entry.folder{ title = "Top", locator = { folder = 3 }, path = {} }, false), "",
+   "an empty path (directly under the root) -> nothing")
+eq(Folders.secondLine(Entry.folder{ title = "Bare", locator = { folder = 4 } }, false), "",
+   "no subtitle, no path -> nothing, never Unknown")
+
+-- Ancestors: the folder views this one was listed from, root first, nearest last.
+local root = { title = "Courses" }
+local a = { title = "Lit 101", parent = root }
+local b = { title = "Week 1", parent = a }
+local function titles(list)
+    local t = {}
+    for i, v in ipairs(list) do t[i] = v.title end
+    return table.concat(t, ",")
+end
+eq(titles(Folders.ancestors(b)), "Courses,Lit 101", "two levels down -> root, then the nearest")
+eq(titles(Folders.ancestors(root)), "", "the root has none")
+eq(titles(Folders.ancestors({ title = "From search" })), "", "a folder opened from search or a shelf has none")
+
+-- The page task a folder view runs in a job: Catalog.list at 50 rows.
+local seen = {}
+Catalog.register(api2{ id = "fv_lister", name = "FV Lister", root = "FV Top",
+    list = function(loc, limit, page, ctx)
+        seen[#seen + 1] = { loc = loc, limit = limit, page = page }
+        if loc and loc.folder == "gone" then return nil, "folder gone" end
+        return { ctx.Entry.folder{ title = "Sub", locator = { folder = "sub" } } }, page == 1
+    end })
+local res = Folders.pageTask("fv_lister", nil, 1)()
+eq(#res.entries, 1, "the task returns the stamped rows")
+eq(res.entries[1].action, "folder", "…folder rows included")
+eq(res.has_more, true, "…and has_more")
+check(seen[1].loc == nil and seen[1].limit == 50 and seen[1].page == 1, "root listed with limit 50, page 1")
+res = Folders.pageTask("fv_lister", { folder = "sub" }, 2)()
+eq(res.has_more, false, "has_more is a boolean")
+local ok, err = pcall(Folders.pageTask("fv_lister", { folder = "gone" }, 1))
+check(not ok and tostring(err):find("folder gone", 1, true) ~= nil, "a failed list raises its reason", err)
+ok, err = pcall(Folders.pageTask("nobody", nil, 1))
+check(not ok and tostring(err):find("unknown source", 1, true) ~= nil, "an unknown source raises", err)
+
+-- Browse chips: enabled, set-up api-2 sources with a root, in source order.
+local function root_ids()
+    local t = {}
+    for __, r in ipairs(Settings.browseRoots()) do
+        if r.provider.id:match("^br_") then t[#t + 1] = r.provider.id .. "=" .. r.title end
+    end
+    return table.concat(t, ",")
+end
+local function lister() return {}, false end
+Catalog.register(api2{ id = "br_one", name = "BR One", root = "One root", list = lister })
+Catalog.register(api2{ id = "br_two", name = "BR Two", root = "Two root", list = lister })
+Catalog.register(api2{ id = "br_none", name = "BR None", list = lister })
+Catalog.register(api2{ id = "br_gated", name = "BR Gated", root = "Gated root", list = lister,
+    settings = { { key = "token", title = "Token", type = "secret", required = true } } })
+check(Catalog.register{ api = 1, id = "br_api1", name = "BR api 1", root = "Not a root",
+    search = function() return {}, false end, resolve = function() end }, "api-1 provider with a root field")
+eq(root_ids(), "br_one=One root,br_two=Two root", "one chip per enabled, set-up api-2 source with a root")
+Settings.setSourceOrder({ "br_two", "br_one" })
+eq(root_ids(), "br_two=Two root,br_one=One root", "chips follow the arranged source order")
+Settings.setEnabled(Catalog.byId("br_two"), false)
+eq(root_ids(), "br_one=One root", "a disabled source has no chip")
+Settings.setEnabled(Catalog.byId("br_two"), true)
+Settings.setProviderSetting("br_gated", "token", "t")
+eq(root_ids(), "br_two=Two root,br_one=One root,br_gated=Gated root", "set up -> its chip appears")
+end)()
+
 ---------------------------------------------------------------------------
 -- Closing a view refreshes the panel (#25): KOReader drops the refresh of a
 -- bare UIManager:close, so every OpenShelf view asks for a full-screen "ui"
