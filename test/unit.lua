@@ -1881,6 +1881,146 @@ qnil, qerr = Catalog.searchIn("helpy", nil, "x", 10, 1)
 check(qnil == nil and type(qerr) == "string", "searchIn on an api-1 provider is an error", qerr)
 end)()
 
+;(function() -- provider_check folders step (api 2): own function, local limit
+print("== provider_check: folders step (api 2, PROVIDERS.md 10) ==")
+local Check = dofile(this .. "../tools/provider_check.lua")
+local NONE = {}   -- tree{ root = NONE } removes the root (pairs skips nil values)
+local function tree(over)
+    local seen = { listed = {}, resolved = {}, scoped = {} }
+    local p = {
+        api = 2, id = "treecheck", name = "Tree Check", root = "Top",
+        search = function(q, _l, _p, ctx)
+            return { ctx.Entry.folder{ title = "Found " .. q, locator = { folder = "found", n = 3 } },
+                     ctx.Entry.new{ title = "Loose", locator = { url = "https://t/loose" } } }, false
+        end,
+        list = function(loc, limit, page, ctx)
+            seen.listed[#seen.listed + 1] = (loc and loc.folder or "<root>") .. ":" .. page .. ":" .. limit
+            seen.last_loc = loc
+            return { ctx.Entry.folder{ title = "Sub", locator = { folder = "sub" } },
+                     ctx.Entry.new{ title = "Inner", locator = { url = "https://t/inner" } } }, false
+        end,
+        resolve = function(loc)
+            seen.resolved[#seen.resolved + 1] = loc.url or ("folder " .. tostring(loc.folder))
+            return loc.url
+        end,
+    }
+    for k, val in pairs(over or {}) do
+        if val == NONE then p[k] = nil else p[k] = val end
+    end
+    return p, seen
+end
+local function run(p, extra)
+    local lines = {}
+    local opts = { provider = p, query = "cats", offline = true, out = function(l) lines[#lines + 1] = l end }
+    for k, val in pairs(extra or {}) do opts[k] = val end
+    local ok, problems = Check.run(opts)
+    return ok, table.concat(problems or {}, " | "), table.concat(lines, "\n")
+end
+local function fails_with(p, needle, label, extra)
+    local ok, problems = run(p, extra)
+    check(ok == false and problems:find(needle, 1, true) ~= nil, label, problems)
+end
+local function files_only(specs) return function(_q, _l, _p, ctx)
+    local built = {}
+    for i, r in ipairs(specs) do built[i] = ctx.Entry.new(r) end
+    return built, false
+end end
+
+local p, seen = tree()
+local ok, problems, text = run(p)
+check(ok == true, "a well-formed api-2 provider passes", problems)
+eq(table.concat(seen.listed, ","), "<root>:1:50,found:1:50", "lists the root, then the first folder row of search, 50 rows a page")
+check(text:find("ok    folders", 1, true) ~= nil, "prints the folders step", text)
+eq(seen.last_loc and seen.last_loc.n, 3, "the folder locator reaches list after its JSON round trip")
+eq(table.concat(seen.resolved, ","), "https://t/loose", "resolve skips the folder row and takes the file")
+
+p, seen = tree{ root = NONE }
+run(p)
+eq(table.concat(seen.listed, ","), "found:1:50", "no root: only the first folder row is listed")
+p, seen = tree{ search = files_only{ { title = "Loose", locator = { url = "https://t/loose" } } } }
+run(p)
+eq(table.concat(seen.listed, ","), "<root>:1:50,sub:1:50", "no folder in search: the root's first folder row is listed")
+p, seen = tree{ root = NONE, search = files_only{ { title = "Loose", locator = { url = "https://t/loose" } } },
+    shelves = { { key = "top", title = "Top" } },
+    browse = function(_k, _l, ctx) return { ctx.Entry.folder{ title = "Shelved", locator = { folder = "shelved" } } }, false end }
+ok, problems = run(p)
+check(ok == true, "a shelf of folder rows passes", problems)
+eq(table.concat(seen.listed, ","), "shelved:1:50", "no folder in search: the first shelf folder row is listed")
+p, seen = tree{ root = NONE, search = files_only{ { title = "Loose", locator = { url = "https://t/loose" } } } }
+ok, problems, text = run(p)
+check(ok == true, "nothing to list still passes", problems)
+check(text:find("nothing to list", 1, true) ~= nil, "…with a nothing-to-list warning", text)
+eq(#seen.listed, 0, "…and no list call")
+
+fails_with(tree{ list = function() error("list kaboom") end }, "list kaboom", "a raising list fails")
+fails_with(tree{ list = function() return nil, "folder denied" end }, "folder denied", "list nil, err fails with err")
+fails_with(tree{ list = function(_l, limit, _p, ctx)
+    local many = {}
+    for i = 1, limit + 1 do many[i] = ctx.Entry.new{ title = "f" .. i, locator = { id = i } } end
+    return many, false
+end }, "51 rows for limit 50", "more rows than the folder page size fails")
+fails_with(tree{ list = function(_l, _n, _p, ctx)
+    return { ctx.Entry.new{ title = "f", locator = { id = 1 } } }, "maybe"
+end }, "has_more must be a boolean", "a non-boolean list has_more fails")
+fails_with(tree{ list = function() return { { title = "bad", locator = { url = "u" }, fn = print } }, false end },
+    "function", "a list row that is not plain data fails")
+ok, problems = run(tree{ list = function() return {}, false end })
+check(ok == true, "an empty folder passes", problems)
+
+local pages = {}
+ok, problems = run(tree{ root = NONE, list = function(_l, _n, page, ctx)
+    pages[#pages + 1] = page
+    local got = {}
+    for i = (page - 1) * 2 + 1, page * 2 do got[#got + 1] = ctx.Entry.new{ title = "f" .. i, locator = { id = i } } end
+    return got, page == 1
+end })
+check(ok == true, "a paged folder passes", problems)
+eq(table.concat(pages, ","), "1,2", "page 1 said has_more -> page 2 listed too")
+fails_with(tree{ list = function(_l, _n, _p, ctx)
+    return { ctx.Entry.new{ title = "f", locator = { id = 1 } } }, true
+end }, "repeats 1 row", "page 2 repeating page 1 fails")
+
+local scoped = {}
+ok, problems = run(tree{ search_in = function(loc, q, limit, page, ctx)
+    scoped[#scoped + 1] = { loc = loc, q = q, limit = limit, page = page }
+    return { ctx.Entry.new{ title = q .. " inside", locator = { url = "https://t/s" }, path = { "Found" } } }, false
+end }, { limit = 7 })
+check(ok == true, "a working search_in passes", problems)
+eq(#scoped, 1, "search_in runs once")
+eq(scoped[1] and scoped[1].loc and scoped[1].loc.folder, "found", "…on the first folder row")
+eq(scoped[1] and scoped[1].q, "cats", "…with the query")
+eq(scoped[1] and scoped[1].limit, 7, "…and --limit")
+eq(scoped[1] and scoped[1].page, 1, "…page 1")
+ok, problems = run(tree{ search_in = function() return {}, false end })
+check(ok == true, "search_in with no hits passes", problems)
+fails_with(tree{ search_in = function() return nil, "scope broke" end }, "scope broke", "a failing search_in fails")
+fails_with(tree{ search_in = function(_l, _q, limit, _p, ctx)
+    local many = {}
+    for i = 1, limit + 1 do many[i] = ctx.Entry.new{ title = "s" .. i, locator = { id = i } } end
+    return many, false
+end }, "rows for limit", "search_in over --limit fails")
+
+p, seen = tree{ search = function(_q, _l, _p, ctx)
+    return { ctx.Entry.folder{ title = "Only", locator = { folder = "only" } } }, false
+end }
+ok, problems = run(p)
+check(ok == true, "search with only folder rows passes", problems)
+eq(table.concat(seen.resolved, ","), "https://t/inner", "resolve uses the first file found inside a folder")
+p, seen = tree{ search = function(_q, _l, _p, ctx)
+    return { ctx.Entry.folder{ title = "Only", locator = { folder = "only" } } }, false
+end, list = function(_l, _n, _p, ctx) return { ctx.Entry.folder{ title = "Deeper", locator = { folder = "d" } } }, false end }
+ok, problems, text = run(p)
+check(ok == true, "no file anywhere still passes", problems)
+check(text:find("warn  resolve", 1, true) ~= nil, "…with resolve skipped and a warning", text)
+eq(#seen.resolved, 0, "…and nothing resolved")
+
+fails_with({ api = 1, id = "oldfold", name = "Old Fold",
+    search = function(_q, _l, _p, ctx)
+        return { ctx.Entry.folder{ title = "F", locator = { folder = "f" } },
+                 ctx.Entry.new{ title = "x", locator = { url = "https://o/x" } } }, false
+    end, resolve = function(loc) return loc.url end }, "folders need api = 2", "an api-1 provider returning folder rows fails the rows step")
+end)()
+
 ---------------------------------------------------------------------------
 -- Closing a view refreshes the panel (#25): KOReader drops the refresh of a
 -- bare UIManager:close, so every OpenShelf view asks for a full-screen "ui"

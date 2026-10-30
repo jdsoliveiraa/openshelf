@@ -1,6 +1,6 @@
 --[[
 Provider check (PROVIDERS.md §10): validate one provider file against the
-api 1 contract without KOReader.
+api 1 / api 2 contract without KOReader.
 
     eval "$(luarocks --lua-version=5.1 path)"
     luajit tools/provider_check.lua <provider.lua> ["query"] [flags]
@@ -14,9 +14,12 @@ Flags:
 
 Steps: load + Catalog.validate → required settings → check(ctx) → search →
 plain-data walk + JSON round trip of every row → usable locators →
-browse every shelf (page 2 too when page 1 says has_more) → resolve the first non-buy row (from its round-tripped
-locator, as a fresh process would) → HEAD with the resolved headers → cover
-reachable without headers → optional download. Exit status 1 on any failure.
+browse every shelf (page 2 too when page 1 says has_more) → api 2: list the
+root and the first folder row (page 2 too), search_in once → resolve the first
+file row, not buy, not folder (from its round-tripped locator, as a fresh
+process would; a file found inside a folder when search had none) → HEAD with
+the resolved headers → cover reachable without headers → optional download.
+Exit status 1 on any failure.
 
 Also a module: test/unit.lua drives Check.run offline with provider tables,
 and test/headless_providers.lua runs it live over the built-ins.
@@ -73,6 +76,7 @@ local Check = {}
 Check.DEFAULT_QUERY = "pride and prejudice"
 Check.DEFAULT_LIMIT = 10
 Check.SHELF_LIMIT = 32   -- browse page size: browse.lua's PAGE_SIZE
+Check.FOLDER_LIMIT = 50  -- folder page size (DESIGN.md §12.4)
 
 Check.USAGE = [==[usage: luajit tools/provider_check.lua <provider.lua> ["query"] [--set key=value]... [--limit N] [--download] [--offline]==]
 
@@ -230,6 +234,9 @@ function Check.run(opts)
         if row.action ~= nil and not VALID_ACTION[row.action] then
             return nil, "unknown action " .. tostring(row.action)
         end
+        if row.action == Entry.ACTION.FOLDER and p.api ~= 2 then
+            return nil, "is a folder row; folders need api = 2"
+        end
         local ok, encoded = pcall(JSON.encode, row)
         if not ok then return nil, "JSON encode failed: " .. tostring(encoded) end
         local ok2, decoded = pcall(JSON.decode, encoded)
@@ -269,10 +276,15 @@ function Check.run(opts)
     local stamped = Catalog.stamp(p, decoded)
     for i = 1, math.min(3, #stamped) do
         local r = stamped[i]
-        out(("      %d. [%s] %s — %s (%s)"):format(i, r.action, r.title, r.author, r.format))
+        if r.action == Entry.ACTION.FOLDER then
+            out(("      %d. [folder] %s"):format(i, r.title))
+        else
+            out(("      %d. [%s] %s — %s (%s)"):format(i, r.action, r.title, r.author, r.format))
+        end
     end
 
     -- 5. shelves: page 1, and page 2 when page 1 says has_more (PROVIDERS.md §5.3)
+    local shelf_rows = {}   -- decoded, for the folders step
     local function browse_page(shelf, page)
         local step = "shelf " .. shelf.key .. (page > 1 and (" p" .. page) or "")
         local okb, srows, more = pcall(p.browse, shelf.key, Check.SHELF_LIMIT, ctx, page)
@@ -287,7 +299,8 @@ function Check.run(opts)
             fail(step, "has_more must be a boolean or absent (got " .. type(more) .. ")"); return nil
         end
         out(("      page %d: %d row(s), has_more=%s"):format(page, #srows, tostring(more == true)))
-        check_rows(step, srows)
+        local sdecoded = check_rows(step, srows)
+        for ___, r in ipairs(sdecoded) do shelf_rows[#shelf_rows + 1] = r end
         return srows, more == true
     end
     for __, shelf in ipairs(p.shelves or {}) do
@@ -309,13 +322,93 @@ function Check.run(opts)
         end
     end
 
-    -- 6. resolve the first row that is not a buy link, from its decoded locator
+    -- 5b. folders (api 2, PROVIDERS.md §10): the root, the first folder row
+    -- found (search, shelves, then the root's rows) and search_in once.
+    local function is_file(r) return r.action ~= Entry.ACTION.BUY and r.action ~= Entry.ACTION.FOLDER end
+    local function first_folder(candidates)
+        for __, r in ipairs(candidates or {}) do
+            if r.action == Entry.ACTION.FOLDER then return r end
+        end
+    end
+    local files_inside = {}   -- decoded file rows of the listed folders, for resolve
+    local listed_any = false
+    if p.api == 2 then
+        local function list_page(label, locator, page)
+            local where = ("%s p%d"):format(label, page)
+            local okl, lrows, more = pcall(p.list, locator, Check.FOLDER_LIMIT, page, ctx)
+            if not okl then fail("folders", where .. " raised: " .. tostring(lrows)); return nil end
+            if lrows == nil then fail("folders", where .. ": " .. tostring(more or "list returned nil")); return nil end
+            if type(lrows) ~= "table" then
+                fail("folders", where .. " returned a " .. type(lrows) .. ", want a list"); return nil
+            end
+            if type(more) ~= "boolean" then
+                fail("folders", where .. ": has_more must be a boolean (got " .. type(more) .. ")"); return nil
+            end
+            if #lrows > Check.FOLDER_LIMIT then
+                fail("folders", ("%s: %d rows for limit %d"):format(where, #lrows, Check.FOLDER_LIMIT)); return nil
+            end
+            pass("folders", ("%s: %d row(s), has_more=%s"):format(where, #lrows, tostring(more)))
+            listed_any = true
+            local ldecoded = #lrows > 0 and check_rows("folders", lrows) or {}
+            for __, r in ipairs(ldecoded) do
+                if is_file(r) then files_inside[#files_inside + 1] = r end
+            end
+            return ldecoded, more
+        end
+        local function list_folder(label, locator)
+            local page1, more = list_page(label, locator, 1)
+            if not page1 or not more then return page1 end
+            local page2 = list_page(label, locator, 2)
+            if page2 then
+                local shown, repeats = {}, 0
+                for __, r in ipairs(page1) do shown[Entry.locatorKey(r.locator)] = true end
+                for __, r in ipairs(page2) do
+                    if shown[Entry.locatorKey(r.locator)] then repeats = repeats + 1 end
+                end
+                if repeats > 0 then
+                    fail("folders", ("%s p2 repeats %d row(s) of page 1 (is `page` ignored?)"):format(label, repeats))
+                end
+            end
+            return page1
+        end
+        local root_rows = p.root and list_folder(("root %q"):format(p.root), nil)
+        local folder = first_folder(decoded) or first_folder(shelf_rows) or first_folder(root_rows)
+        if folder then list_folder(("%q"):format(folder.title), folder.locator) end
+        if not p.root and not folder then
+            out("warn  folders   nothing to list (no root, no folder row in search or shelves)")
+        elseif p.search_in then
+            local where = folder and ("%q in %q"):format(query, folder.title) or ("%q in the root"):format(query)
+            local loc = folder and folder.locator or nil
+            local oks, qrows, qmore = pcall(p.search_in, loc, query, limit, 1, ctx)
+            if not oks then fail("search_in", where .. " raised: " .. tostring(qrows))
+            elseif qrows == nil then fail("search_in", where .. ": " .. tostring(qmore or "returned nil"))
+            elseif type(qrows) ~= "table" then fail("search_in", where .. " returned a " .. type(qrows) .. ", want a list")
+            elseif type(qmore) ~= "boolean" then
+                fail("search_in", where .. ": has_more must be a boolean (got " .. type(qmore) .. ")")
+            elseif #qrows > limit then fail("search_in", ("%s: %d rows for limit %d"):format(where, #qrows, limit))
+            else
+                pass("search_in", ("%s: %d row(s), has_more=%s"):format(where, #qrows, tostring(qmore)))
+                if #qrows > 0 then check_rows("search_in", qrows) end
+            end
+        end
+    end
+
+    -- 6. resolve the first file row (not buy, not folder), from its decoded
+    -- locator; when search had none, the first file found inside a folder
     local first
     for __, r in ipairs(stamped) do
-        if r.action ~= Entry.ACTION.BUY then first = r; break end
+        if is_file(r) then first = r; break end
+    end
+    if not first and files_inside[1] then
+        first = files_inside[1]
+        out(("      resolving %q, found inside a folder"):format(tostring(first.title)))
     end
     if not first then
-        pass("resolve", "only buy rows; nothing to resolve")
+        if listed_any or first_folder(stamped) then
+            out("warn  resolve   no file found in search or the listed folders (skipped)")
+        else
+            pass("resolve", "only buy rows; nothing to resolve")
+        end
         return done()
     end
     local okr, value, rerr = pcall(p.resolve, first.locator, ctx)
