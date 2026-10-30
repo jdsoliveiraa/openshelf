@@ -81,8 +81,8 @@ function Shelf.rows(view, opts)
     for i = 1, count do
         local entry = entries[i]
         local st = states[i]
-        local cover = P.cover(entry.cover_url, g.cover_w, g.cover_h, {
-            letter = P.letterFor(entry), dim = st.missing,
+        local cover = P.entryCover(entry, g.cover_w, g.cover_h, {
+            dim = st.missing,
             badge = (st.downloaded and not st.missing and opts.mark_downloaded) and Glyphs.check or nil,
         })
         local cell

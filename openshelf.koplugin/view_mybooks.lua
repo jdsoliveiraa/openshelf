@@ -87,7 +87,7 @@ function MyBooksView:buildRows()
             local shelf_rows = Shelf.rows(self, {
                 title = section.title, entries = entries,
                 on_see_all = function() self:openList(section.title, entries) end,
-                on_tap = function(e) self:openDetail(e) end,
+                on_tap = function(e) App.openEntry(e, self) end,
                 on_hold = function(e) self:removeDialog(e) end,
                 status = function(e)
                     local st = App.bookStatus(e)

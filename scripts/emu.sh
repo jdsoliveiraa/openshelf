@@ -44,8 +44,9 @@ if [ -n "$COPY" ]; then
 elif [ ! -d "$PLUG" ] || [ -L "$PLUG" ]; then
   ln -sfn "$HERE/openshelf.koplugin" "$PLUG"
 fi
-# a fresh home would boot into KOReader's quickstart guide (CLAUDE.md "Emulator")
-[ -f "$KOHOME/settings.reader.lua" ] || echo 'return { ["quickstart_shown_version"] = 999999999999 }' > "$KOHOME/settings.reader.lua"
+# a fresh home would boot into KOReader's quickstart guide (CLAUDE.md "Emulator") and, on the
+# emulator's colour screen, show a "rendered in color" notice over every screenshot
+[ -f "$KOHOME/settings.reader.lua" ] || echo 'return { ["quickstart_shown_version"] = 999999999999, ["color_rendering"] = true }' > "$KOHOME/settings.reader.lua"
 TPL="$KOHOME/plugins/provider-openshelf-template.koplugin"
 if [ -n "$TEMPLATE" ]; then
   ln -sfn "$HERE/provider-openshelf-template.koplugin" "$TPL"

@@ -1,7 +1,8 @@
 --[[
 Shared application context for the views: the library singleton, the stack of
-open OpenShelf screens (so "X" can leave the whole app), book status lookups
-and the "open this file in the reader" helper.
+open OpenShelf screens (so "X" can leave the whole app), book status lookups,
+the one tap dispatcher (a folder row opens a folder view, any other row its
+detail page) and the "open this file in the reader" helper.
 --]]
 local DataStorage = require("datastorage")
 local UIManager = require("ui/uimanager")
@@ -41,6 +42,17 @@ function App.homeView()
     return App.views[1]
 end
 
+-- Close every OpenShelf screen above `view` (top first): the folder title
+-- menu's jump to an ancestor. Each close queues its full refresh; UIManager
+-- merges them into one.
+function App.closeAbove(view)
+    for i = #App.views, 1, -1 do
+        local v = App.views[i]
+        if v == view then return end
+        v:close()
+    end
+end
+
 ---------------------------------------------------------------------------
 -- Library singleton (My books)
 ---------------------------------------------------------------------------
@@ -71,7 +83,10 @@ end
 
 --- Where an entry stands on this device.
 -- { downloaded = bool, path = string|nil, missing = bool, record = rec|nil, dl = Downloader state|nil }
+-- A folder row is never on the device (no record, no file, no ✓).
 function App.bookStatus(entry)
+    local Entry = require("entry")
+    if entry.action == Entry.ACTION.FOLDER then return { downloaded = false, missing = false } end
     local rec = App.library():find(entry)
     local path = rec and rec.path or Downloader.targetPath(entry)
     local size = file_size(path)
@@ -109,12 +124,41 @@ end
 -- Shared view helpers
 ---------------------------------------------------------------------------
 
+--- Tap on a row anywhere (results, See all, shelves, My books, folder
+--- views): a folder row opens its folder view, never a detail page; any
+--- other row opens view:openDetail. `parent` is the folder view the row was
+--- listed in (nil elsewhere).
+function App.openEntry(entry, view, parent)
+    local Entry = require("entry")
+    if entry.action == Entry.ACTION.FOLDER then
+        App.openFolder{ provider_id = entry.provider, folder = entry, title = entry.title, parent = parent }
+        return
+    end
+    view:openDetail(entry)
+end
+
+--- Open a folder view over the top screen: opts = { provider_id, title,
+--- folder = the row (nil for a root), parent = the folder view it was listed
+--- from }. Asks for Wi-Fi like search: nothing is cached yet.
+function App.openFolder(opts)
+    local NetworkMgr = require("ui/network/manager")
+    NetworkMgr:runWhenOnline(function()
+        local FolderView = require("view_folder")
+        UIManager:show(FolderView:new{
+            provider_id = opts.provider_id, title = opts.title,
+            folder = opts.folder, parent = opts.parent,
+        })
+    end)
+end
+
 --- Long-press on a book anywhere: download it straight away (DESIGN.md 8/32).
 function App.holdDownload(entry, view)
     local InfoMessage = require("ui/widget/infomessage")
     local NetworkMgr = require("ui/network/manager")
     local _ = require("gettext")
     local Entry = require("entry")
+    -- Hold on a folder will be Download all (decision 82); nothing until then.
+    if entry.action == Entry.ACTION.FOLDER then return end
     -- Buy rows have nothing to download: hold opens the detail page with the
     -- store URL + QR instead (decision 49).
     if entry.action == Entry.ACTION.BUY then

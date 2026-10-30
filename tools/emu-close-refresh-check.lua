@@ -1,6 +1,8 @@
 -- Close-refresh check for the KOReader emulator (#25). No network.
 -- Opens detail, a "See all" list and My books, leaves each through its real
--- left-arrow callback (and detail through the Back key path), and logs the
+-- left-arrow callback (and detail through the Back key path), then three
+-- nested folder views (#17, examples/folders_demo.lua) popped one level at
+-- a time by the left arrow and the Back key, and logs the
 -- full-screen refreshes enqueued with no widget (what ViewBase:onCloseWidget
 -- adds): each close must add exactly one "ui", and App.openBook none.
 -- The SDL emulator redraws the whole window on any refresh, so this checks
@@ -10,9 +12,11 @@
 local UIManager = require("ui/uimanager")
 local Screen = require("device").screen
 local App = require("app")
+local Catalog = require("catalog")
 local Entry = require("entry")
 local OUT = os.getenv("OPENSHELF_SHOT_DIR")
 local EPUB = os.getenv("OPENSHELF_TEST_EPUB")
+local REPO = (debug.getinfo(1, "S").source:match("^@(.*/)tools/") or "./")
 local step = 0
 local function log(...) print("DEVSCRIPT", ...) end
 local function shot(name)
@@ -51,6 +55,13 @@ local function closes(label, fn)
         (full_ui - before == 1 and #App.views == views - 1) and "PASS" or "FAIL")
 end
 local function left_arrow() top().title_bar.left_icon_tap_callback() end
+local function open_row(title)
+    for __, row in ipairs(top().entries) do
+        if row.title == title then return top():openEntry(row) end
+    end
+    error("no row " .. title)
+end
+Catalog.register(dofile(REPO .. "examples/folders_demo.lua"))
 
 local e = Entry.new{ title = "Close Refresh Test", author = "Nobody", language = "en",
     source = "dev", provider_id = "dev", locator = { url = "https://example.invalid/x.epub" } }
@@ -69,7 +80,15 @@ at(11, function() home():openMyBooks() end, "mybooks")
 at(12, function() shot("mybooks") end)
 at(13, function() closes("mybooks left arrow", left_arrow) end)
 at(14, function() shot("after-mybooks") end)
-at(15, function()
+at(15, function() App.openFolder{ provider_id = "folders_demo", title = "Demo courses" } end, "folder root")
+at(16, function() open_row("Literature 101") end, "folder level 1")
+at(17, function() open_row("Week 1") end, "folder level 2")
+at(18, function() shot("folder-level-2") end)
+at(19, function() closes("folder level 2 left arrow", left_arrow) end)
+at(20, function() closes("folder level 1 Back key", function() top():onClose() end) end)
+at(21, function() closes("folder root left arrow", left_arrow) end)
+at(22, function() shot("after-folders") end)
+at(23, function()
     assert(EPUB, "OPENSHELF_TEST_EPUB not set")
     home():openDetail(e)
     local before = full_ui
@@ -77,5 +96,5 @@ at(15, function()
     log("CHECK", "openBook", "views", #App.views, "full ui refreshes +" .. (full_ui - before),
         (full_ui == before and #App.views == 0) and "PASS" or "FAIL")
 end, "open book")
-at(19, function() shot("reader") end)
-at(20, function() log("done"); os.exit(0) end, "exit")
+at(27, function() shot("reader") end)
+at(28, function() log("done"); os.exit(0) end, "exit")
