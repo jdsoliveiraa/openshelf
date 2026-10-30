@@ -44,8 +44,13 @@ end
 
 -- Close every OpenShelf screen above `view` (top first): the folder title
 -- menu's jump to an ancestor. Each close queues its full refresh; UIManager
--- merges them into one.
+-- merges them into one. Nothing happens when `view` is not open.
 function App.closeAbove(view)
+    local open = false
+    for __, v in ipairs(App.views) do
+        if v == view then open = true end
+    end
+    if not open then return end
     for i = #App.views, 1, -1 do
         local v = App.views[i]
         if v == view then return end

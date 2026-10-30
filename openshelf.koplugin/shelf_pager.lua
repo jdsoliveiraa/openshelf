@@ -48,6 +48,12 @@ function ShelfPager:_add(e)
     return true
 end
 
+--- Whether any page has arrived (false for a folder view's pager until its
+--- page 1 does).
+function ShelfPager:loaded()
+    return self.page > 0
+end
+
 function ShelfPager:canLoadMore()
     return self.has_more and not self.loading
 end

@@ -2090,18 +2090,34 @@ end
 -- A folder view starts with nothing loaded: page 1 is its first fetch.
 local pg = ShelfPager.new{ page = 0, has_more = true }
 eq(#pg.entries, 0, "a folder pager starts empty")
-eq(pg.page, 0, "…with no page loaded")
+eq(pg:loaded(), false, "…with no page loaded")
 eq(pg:begin(), 1, "its first fetch is page 1")
 pg:fail("offline")
-eq(pg.page, 0, "a failed first page leaves nothing loaded")
+eq(pg:loaded(), false, "a failed first page leaves nothing loaded")
 eq(pg:begin(), 1, "Retry asks for page 1 again")
 eq(pg:append({ { title = "A", locator = { url = "https://f/a" } } }, true), 1, "page 1 appended")
-eq(pg.page, 1, "page 1 loaded")
+eq(pg:loaded(), true, "page 1 loaded")
 eq(pg:begin(), 2, "then Load more asks for page 2")
 local seeded = ShelfPager.new{ entries = { { title = "B", locator = { url = "https://f/b" } } } }
-eq(seeded.page, 1, "a pager seeded with entries still starts at page 1 (See all)")
+eq(seeded:loaded(), true, "a pager seeded with entries has page 1 loaded (See all)")
+eq(ShelfPager.new{ page = 0 }:begin(), nil, "nothing loaded and no has_more -> never fetches")
 
 eq(Folders.PAGE_SIZE, 50, "folder views list 50 rows per page")
+
+-- Meta line of a folder row: Source · N files · size, else Source · Folder.
+-- The view supplies the (translated) words; these stand in for them.
+local words = {
+    files = function(n) return n == 1 and "1 file" or (n .. " files") end,
+    size = function(b) return math.floor(b / 1048576) .. " MB" end,
+    folder = "Folder",
+}
+local function meta(over) return Folders.metaLine(Entry.folder(over), "UCStudent", words) end
+eq(meta{ title = "T", locator = { folder = 1 }, count = 43, size = 125829120 }, "UCStudent · 43 files · 120 MB",
+   "count and size")
+eq(meta{ title = "T", locator = { folder = 1 }, count = 1 }, "UCStudent · 1 file", "count only")
+eq(meta{ title = "T", locator = { folder = 1 }, size = 2097152 }, "UCStudent · 2 MB", "size only")
+eq(meta{ title = "T", locator = { folder = 1 } }, "UCStudent · Folder", "neither -> Folder")
+eq(meta{ title = "T", locator = { folder = 1 }, count = 0 }, "UCStudent · 0 files", "an empty folder says 0 files")
 
 -- Second line of a folder row: subtitle, else path (not inside folder views), else nothing.
 local sub = Entry.folder{ title = "Lab01", locator = { folder = 1 }, subtitle = "3 subfolders", path = { "SS", "T" } }

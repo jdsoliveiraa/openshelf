@@ -1,11 +1,12 @@
 --[[
 Folder views, the pure part (DESIGN.md §12.3–12.5, ticket #17). No KOReader:
 view_folder.lua draws the view and runs pageTask in a job; pane_results.lua
-uses secondLine for folder rows.
+uses secondLine and metaLine for folder rows.
 
   Folders.PAGE_SIZE                        rows per list() call (50)
   Folders.pageTask(id, locator, page)      -> function for Jobs.run: { entries, has_more }
   Folders.secondLine(entry, in_folder)     -> a folder row's second line ("" for none)
+  Folders.metaLine(entry, label, words)    -> its meta line, "Source · 43 files · 120 MB"
   Folders.ancestors(view)                  -> the folder views it was listed from, root first
 
 A folder view keeps `parent`, the folder view it was listed from (nil when
@@ -36,6 +37,17 @@ function Folders.secondLine(entry, in_folder)
         return table.concat(entry.path, " › ")
     end
     return ""
+end
+
+--- `label · N files · size` from count / size when given, else
+--- `label · Folder`. words = { files = fn(n), size = fn(bytes), folder = "…" }:
+--- the view's translated wording (this module has no gettext).
+function Folders.metaLine(entry, label, words)
+    local parts = { label }
+    if entry.count then parts[#parts + 1] = words.files(entry.count) end
+    if entry.size then parts[#parts + 1] = words.size(entry.size) end
+    if #parts == 1 then parts[2] = words.folder end
+    return table.concat(parts, " · ")
 end
 
 --- The chain of folder views below `view` that listed it, root first,

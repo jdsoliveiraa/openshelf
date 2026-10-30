@@ -1,16 +1,18 @@
 --[[
 A full-screen list/grid of entries with paging: "See all" for a browse shelf
-or a My books section. Tap → detail, hold → download (or, with
-allow_remove, "Remove from My books").
+or a My books section. Tap → App.openEntry (detail, or a folder view for a
+folder row), hold → download (or, with allow_remove, "Remove from My
+books").
 
 A browse shelf passes `shelf_id` and page 1's `has_more` (ticket #12): the
 last page then ends in "Load more", which fetches the shelf's next page in a
 job (Jobs.DEADLINE) and appends it, like search results. A failure shows in
 the toolbar (tap for the reason) and leaves Load more in place to retry.
 
-view_folder.lua builds the folder view on this list: it overrides
-fetchPage (its pages come from Catalog.list), countText, statusDetail,
-emptyRows and openEntry, and sets in_folder.
+view_folder.lua builds the folder view on this list: it extends setup
+(page 1 is fetched by the view) and overrides fetchPage (its pages come from
+Catalog.list), countText, failedText, statusDetail, emptyRows, openEntry and
+onTitleTap, and sets in_folder.
 --]]
 local HorizontalGroup = require("ui/widget/horizontalgroup")
 local InfoMessage = require("ui/widget/infomessage")
@@ -103,7 +105,7 @@ end
 function ListView:statusLine()
     local parts = { self:countText() }
     if self.pager and self.pager.loading then
-        parts[#parts + 1] = _("Loading more…")
+        parts[#parts + 1] = self.pager:loaded() and _("Loading more…") or _("Loading…")
     elseif self.pager and self.pager.err then
         parts[#parts + 1] = self:failedText()
     end
@@ -170,7 +172,7 @@ function ListView:buildRows()
     local label = total > 1 and T(_("Page %1 of %2"), self.page, total) or ""
     local items = { P.text(label, 13, { color = P.DARK_GRAY }) }
     local hits = {}
-    if self.pager and self.pager.has_more and self.pager.page > 0 and self.page == total then
+    if self.pager and self.pager.has_more and self.pager:loaded() and self.page == total then
         local bw, bh = Screen:scaleBySize(120), Screen:scaleBySize(32)
         local lw = items[1]:getSize().w
         items[#items + 1] = P.hspace(math.max(0, w - 2 * pad - lw - bw))
@@ -246,8 +248,7 @@ function ListView:openEntry(entry)
 end
 
 function ListView:openDetail(entry)
-    local DetailView = require("view_detail")
-    UIManager:show(DetailView:new{ entry = entry, on_change = function() self:refresh() end })
+    require("view_detail").show(entry, function() self:refresh() end)
 end
 
 function ListView:refresh()

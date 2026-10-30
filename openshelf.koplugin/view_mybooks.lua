@@ -117,8 +117,7 @@ function MyBooksView:buildRows()
 end
 
 function MyBooksView:openDetail(entry)
-    local DetailView = require("view_detail")
-    UIManager:show(DetailView:new{ entry = entry, on_change = function() self:refresh() end })
+    require("view_detail").show(entry, function() self:refresh() end)
 end
 
 function MyBooksView:openList(title, entries)

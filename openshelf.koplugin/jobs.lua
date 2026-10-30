@@ -17,6 +17,10 @@ jobs can run at once and views stay fully interactive.
   }
   h:cancel()   -- kills the child; callbacks are not called
 
+  Jobs.runPage(task, on_done(entries, has_more), on_error(err))
+      -- one page of rows (a See all or folder Load more) under the deadline;
+      -- task returns { entries = {…}, has_more = bool }
+
 Deadline (DESIGN.md §9.6, decision 45): when `timeout` elapses the child is
 killed and reaped and on_error("timed out") runs — the slot then reads
 "<source>: timed out". Subprocess mode only: inline mode cannot interrupt a
@@ -181,6 +185,23 @@ function Jobs.run(spec)
         UIManager:scheduleIn(1, collect)
     end
     return handle
+end
+
+--- One page of rows in a job under the usual deadline: task() returns
+--- { entries, has_more }; anything else is an error. Returns the handle.
+function Jobs.runPage(task, on_done, on_error)
+    return Jobs.run{
+        timeout = Jobs.DEADLINE,
+        task = task,
+        on_done = function(res)
+            if type(res) ~= "table" or type(res.entries) ~= "table" then
+                on_error("no rows")
+                return
+            end
+            on_done(res.entries, res.has_more == true)
+        end,
+        on_error = on_error,
+    }
 end
 
 return Jobs

@@ -544,8 +544,7 @@ end
 -- Navigation to other screens
 ---------------------------------------------------------------------------
 function HomeView:openDetail(entry)
-    local DetailView = require("view_detail")
-    UIManager:show(DetailView:new{ entry = entry, on_change = function() self:rebuild() end })
+    require("view_detail").show(entry, function() self:rebuild() end)
 end
 
 function HomeView:openMyBooks()

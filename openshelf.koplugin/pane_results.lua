@@ -79,21 +79,17 @@ end
 
 local function is_folder(entry) return entry.action == Entry.ACTION.FOLDER end
 
--- `UCStudent · 43 files · 120.0 MB` from count / size when given, else
--- `UCStudent · Folder`.
-local function folder_meta(label, entry)
-    local parts = { label }
-    if entry.count then parts[#parts + 1] = T(N_("1 file", "%1 files", entry.count), entry.count) end
-    if entry.size then parts[#parts + 1] = P.friendlySize(entry.size) end
-    if #parts == 1 then parts[2] = _("Folder") end
-    return table.concat(parts, " · ")
-end
+local FOLDER_WORDS = {
+    files = function(n) return T(N_("1 file", "%1 files", n), n) end,
+    size = function(bytes) return P.friendlySize(bytes) end,
+    folder = _("Folder"),
+}
 
 local function meta_line(entry, st)
     -- Source badge: the registry's current display name for the row's provider
     -- id; a stored row from a provider no longer installed keeps its own label.
     local label = Catalog.nameOf(entry.provider) or entry.source or ""
-    if is_folder(entry) then return folder_meta(label, entry) end
+    if is_folder(entry) then return Folders.metaLine(entry, label, FOLDER_WORDS) end
     local meta = string.format("%s · %s", label, (entry.format or "epub"):upper())
     if entry.price then meta = meta .. " · " .. entry.price end   -- buy rows
     if st.dl and st.dl.status == "queued" then
@@ -124,8 +120,8 @@ function Pane.listRow(view, entry, g, st, on_tap, on_hold, in_folder)
         badge = (st.downloaded and not st.missing) and Glyphs.check or nil,
     })
     local title = P.text(entry.title, 17, { bold = true, max_width = g.text_w })
-    local second = is_folder(entry) and Folders.secondLine(entry, in_folder) or entry.author
-    local author = P.text(second, 15, { max_width = g.text_w })
+    local second = P.text(is_folder(entry) and Folders.secondLine(entry, in_folder) or entry.author, 15,
+        { max_width = g.text_w })
     local meta
     if st.dl and st.dl.status == "active" then
         local pct, label = dl_progress(st)
@@ -141,7 +137,7 @@ function Pane.listRow(view, entry, g, st, on_tap, on_hold, in_folder)
     local textcol = VerticalGroup:new{
         align = "left",
         title, P.vspace(Screen:scaleBySize(2)),
-        author, P.vspace(Screen:scaleBySize(3)),
+        second, P.vspace(Screen:scaleBySize(3)),
         meta,
     }
     local content = HorizontalGroup:new{ align = "center", cover, P.hspace(g.pad), textcol }

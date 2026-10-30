@@ -16,6 +16,7 @@ local Catalog = require("catalog")
 local Downloader = require("downloader")
 local Folders = require("openshelf_folders")
 local Settings = require("settings")
+local Shelf = require("widget_shelf")
 local OUT = os.getenv("OPENSHELF_SHOT_DIR")
 local REPO = (debug.getinfo(1, "S").source:match("^@(.*/)tools/") or "./")
 local step = 0
@@ -48,6 +49,11 @@ local function titles(list)
     local t = {}
     for i, v in ipairs(list) do t[i] = v.title end
     return table.concat(t, " > ")
+end
+-- Tap the centre of a hit rectangle a view built, through its own onTap
+-- (the path a finger takes).
+local function tap(view, hit)
+    view:onTap(nil, { pos = { x = hit.x + math.floor(hit.w / 2), y = hit.y + math.floor(hit.h / 2) } })
 end
 local function row_named(title, entries)
     for __, e in ipairs(entries or top().entries) do
@@ -181,13 +187,13 @@ end, "root menu")
 -- 6. the empty folder and the failing one (Retry)
 at(1, function() top():openEntry(row_named("Empty folder")) end, "open Empty folder")
 at(2, function()
-    check("empty folder", #top().entries == 0 and top().pager.page == 1, top():statusLine())
+    check("empty folder", #top().entries == 0 and top().pager:loaded(), top():statusLine())
     shot("empty-folder")
     top():close()
 end, "empty")
 at(1, function() top():openEntry(row_named("Folder that fails once")) end, "open failing folder")
 at(2, function()
-    check("first listing failed", top().pager.err ~= nil and top().pager.page == 0, top().pager.err)
+    check("first listing failed", top().pager.err ~= nil and not top().pager:loaded(), top().pager.err)
     shot("failing-folder-retry")
     top():loadMore()
 end, "Retry")
@@ -206,6 +212,8 @@ at(1, function()
     App.holdDownload(folder, home())
     check("hold on a folder does nothing (yet)", #App.views == views, #App.views)
     check("no status for folder rows", App.bookStatus(folder).record == nil and not App.bookStatus(folder).downloaded)
+    require("view_detail").show(folder)
+    check("no detail page for a folder", #App.views == views, #App.views)
 end, "guards")
 -- 8. a folder row in search results
 at(1, function() home():startSearch("gothic") end, "search")
@@ -213,8 +221,12 @@ at(3, function()
     local h = home()
     for i, e in ipairs(h.entries) do log(("RESULT %02d | %-8s | %s"):format(i, e.action, e.title)) end
     shot("search-folder-row")
-    App.openEntry(row_named("Gothic", h.entries), h)
-end, "open the Gothic folder from search")
+    local row_hit
+    for __, hit in ipairs(h.hits) do
+        if hit.w == h.screen_w then row_hit = hit; break end   -- the first result row
+    end
+    tap(h, row_hit)
+end, "tap the Gothic folder in the results")
 at(2, function()
     local v = top()
     check("search opens a folder view with no ancestors", v.title == "Gothic" and #Folders.ancestors(v) == 0, v.title)
@@ -226,8 +238,11 @@ at(2, function() shot("search-folder-grid"); home():toggleView(); home():goHome(
 -- 9. a folder tile on the shelf
 at(2, function()
     shot("home-folder-shelf")
-    local tile = Browse.get("folders_demo:courses")[2]
-    App.openEntry(tile, home())
+    local tiles = {}
+    for __, hit in ipairs(home().hits) do
+        if hit.w == Shelf.geometry(home()).cover_w then tiles[#tiles + 1] = hit end
+    end
+    tap(home(), tiles[2])   -- Literature 201
 end, "tap a shelf tile")
 at(2, function()
     check("shelf tile opens its folder", top().title == "Literature 201" and #Folders.ancestors(top()) == 0, top().title)

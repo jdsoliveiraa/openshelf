@@ -154,8 +154,8 @@ local function folder_tile(title, iw, ih, dim)
 end
 
 -- Cover box of exact w×h: the cached image fitted inside a thin frame, else
--- a folder tile (opts.folder = the folder's title) or a placeholder letter.
--- opts: letter, folder, dim, badge (glyph drawn top-right).
+-- a folder tile (opts.folder_title, set for folder rows) or a placeholder
+-- letter. opts: letter, folder_title, dim, badge (glyph drawn top-right).
 function P.cover(url, w, h, opts)
     opts = opts or {}
     local b = Size.border.thin
@@ -167,8 +167,8 @@ function P.cover(url, w, h, opts)
             dimen = Geom:new{ w = iw, h = ih },
             ImageWidget:new{ image = bb, image_disposable = false, dim = opts.dim or nil },
         }
-    elseif opts.folder then
-        inner = folder_tile(opts.folder, iw, ih, opts.dim)
+    elseif opts.folder_title then
+        inner = folder_tile(opts.folder_title, iw, ih, opts.dim)
     else
         inner = CenterContainer:new{
             dimen = Geom:new{ w = iw, h = ih },
@@ -206,7 +206,7 @@ function P.entryCover(entry, w, h, opts)
     opts = opts or {}
     return P.cover(entry.cover_url, w, h, {
         letter = P.letterFor(entry), dim = opts.dim, badge = opts.badge,
-        folder = entry.action == Entry.ACTION.FOLDER and (entry.title or "") or nil,
+        folder_title = entry.action == Entry.ACTION.FOLDER and (entry.title or "") or nil,
     })
 end
 

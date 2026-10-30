@@ -51,18 +51,8 @@ function FolderView:setup()
 end
 
 function FolderView:fetchPage(page, on_done, on_error)
-    return Jobs.run{
-        timeout = Jobs.DEADLINE,
-        task = Folders.pageTask(self.provider_id, self.folder and self.folder.locator, page),
-        on_done = function(res)
-            if type(res) ~= "table" or type(res.entries) ~= "table" then
-                on_error("list failed")
-                return
-            end
-            on_done(res.entries, res.has_more == true)
-        end,
-        on_error = function(err) on_error(err) end,
-    }
+    return Jobs.runPage(Folders.pageTask(self.provider_id, self.folder and self.folder.locator, page),
+        on_done, on_error)
 end
 
 function FolderView:countText()
@@ -75,7 +65,7 @@ function FolderView:failedText()
 end
 
 function FolderView:statusDetail(err)
-    if self.pager.page == 0 then
+    if not self.pager:loaded() then
         return T(_("Could not open this folder:\n%1\n\nTap Retry to try again."), err)
     end
     return T(_("Could not load more of this folder:\n%1\n\nTap Load more to try again."), err)
@@ -90,7 +80,7 @@ function FolderView:emptyRows()
             h = h, hits = {},
         }
     end
-    if self.pager.page > 0 then return { line(_("This folder is empty.")) } end
+    if self.pager:loaded() then return { line(_("This folder is empty.")) } end
     if not self.pager.err then return { line(_("Loading…")) } end
     local bw, bh = Screen:scaleBySize(120), Screen:scaleBySize(36)
     local bh_row = bh + 2 * pad
