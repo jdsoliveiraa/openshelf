@@ -48,6 +48,7 @@ local CODEPOINTS = {
     ban            = 0xF05E,
     chevron_left   = 0xF053,
     chevron_right  = 0xF054,
+    folder         = 0xF07B,   -- checked against the bundled font 2026-10-30
 }
 
 for name, cp in pairs(CODEPOINTS) do

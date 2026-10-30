@@ -784,7 +784,7 @@ check(Catalog.register(fake{ id = "fake_ok" }), "valid provider registers")
 eq(Catalog.byId("fake_ok").name, "Fake Books", "byId finds the registered provider")
 eq(Catalog.ids()[#Catalog.ids()], "fake_ok", "registered provider appended last")
 check(tostring(reason_of(fake{ resolve = false })):find("resolve", 1, true) ~= nil, "missing resolve rejected with reason")
-check(tostring(reason_of(fake{ api = 2 })):find("api", 1, true) ~= nil, "api 2 rejected", reason_of(fake{ api = 2 }))
+check(tostring(reason_of(fake{ api = 3 })):find("api", 1, true) ~= nil, "api 3 rejected", reason_of(fake{ api = 3 }))
 check(tostring(reason_of(fake{ api = "1" })):find("api", 1, true) ~= nil, "api as a string rejected")
 check(tostring(reason_of(fake{ id = "Bad-Id" })):find("id", 1, true) ~= nil, "uppercase/dash id rejected", reason_of(fake{ id = "Bad-Id" }))
 check(reason_of(fake{ id = "9lives" }) ~= nil, "id must start with a letter")
@@ -1447,7 +1447,7 @@ local inv0, ids0 = #Catalog.invalid(), #Catalog.ids()
 local bad = fake_fs({
     ["syntax.lua"]  = "return { api = 1, id = ",
     ["noresolve.lua"] = "return { api = 1, id = 'ext_nores', name = 'No Resolve', search = function() end }",
-    ["api2.lua"]    = src("ext_api2"):gsub("api = 1", "api = 2"),
+    ["api3.lua"]    = src("ext_api3"):gsub("api = 1", "api = 3"),
     ["dup.lua"]     = src("ext_plug_a"),     -- id already taken by a plugin
     ["fine.lua"]    = src("ext_fine"),
     ["notable.lua"] = "return 42",
@@ -1458,7 +1458,7 @@ local ext_why = table.concat(reasons_since(inv0), "\n")
 eq(ids_after(ids0), "ext_fine", "the valid drop-in registers despite its broken neighbours")
 check(ext_why:find("syntax.lua: load error", 1, true) ~= nil, "syntax error listed under the file name", ext_why)
 check(ext_why:find("No Resolve: missing resolve", 1, true) ~= nil, "missing resolve listed with reason")
-check(ext_why:find("Drop ext_api2: api must be 1", 1, true) ~= nil, "api = 2 listed with reason")
+check(ext_why:find("Drop ext_api3: api must be 1 or 2", 1, true) ~= nil, "api = 3 listed with reason")
 check(ext_why:find("Drop ext_plug_a: duplicate id ext_plug_a", 1, true) ~= nil, "drop-in losing to a plugin id is a duplicate")
 check(ext_why:find("Ext gutendex: duplicate id gutendex", 1, true) ~= nil, "a plugin cannot take a built-in id")
 check(ext_why:find("nameless: ", 1, true) ~= nil, "a nameless table is listed under its registry name")
@@ -1512,7 +1512,7 @@ end
 local ok_run, fails = run_check(good())
 check(ok_run == true and #fails == 0, "a well-formed provider passes", table.concat(fails or {}, " | "))
 failed_with("nope", "not a table", "a non-table is refused")
-failed_with(good{ api = 2 }, "api must be 1", "wrong api is refused")
+failed_with(good{ api = 3 }, "api must be 1 or 2", "wrong api is refused")
 failed_with(good{ resolve = false }, "missing resolve", "missing resolve is refused")
 failed_with(good{ search = function() error("kaboom") end }, "kaboom", "a raising search fails with its message")
 failed_with(good{ search = function() return nil, "service down" end }, "service down", "search nil, err fails with err")
@@ -1611,6 +1611,274 @@ local ok_ex, ex_fails = Check.run{ file = this .. "../examples/gutenberg_pt.lua"
     offline = true, out = function() end }
 check(ok_ex == false and table.concat(ex_fails or {}, " "):find("offline stub", 1, true) ~= nil,
       "example drop-in reaches ctx.http (offline stub answers)", table.concat(ex_fails or {}, " | "))
+end)()
+
+---------------------------------------------------------------------------
+-- Folders, api 2 (#23): the contract in entry / catalog / results / dedupe
+-- and the provider_check folders step. DESIGN.md §12, PROVIDERS.md §4.5.
+---------------------------------------------------------------------------
+;(function() -- own function: the main chunk is at the 200-local limit
+local function same(a, b)   -- NULL (LuaJSON's null) and Glyphs are the main chunk's
+    if type(a) ~= "table" or type(b) ~= "table" then return a == b end
+    for k, val in pairs(a) do if not same(val, b[k]) then return false end end
+    for k in pairs(b) do if a[k] == nil then return false end end
+    return true
+end
+
+print("== Folders: Entry.folder (PROVIDERS.md 4.5) ==")
+local fo = Entry.folder{ title = "  Theoretical   Classes ", locator = { bucket = "z5", folder = "k3", junk = NULL },
+    subtitle = " Software Seguro ", path = { "Software Seguro", "T" }, count = 43, size = 125829120,
+    cover = "https://c/1.jpg", provider = "ucs" }
+eq(fo.action, "folder", "Entry.folder builds a folder row")
+eq(Entry.ACTION.FOLDER, "folder", "Entry.ACTION.FOLDER")
+eq(fo.title, "Theoretical Classes", "folder title cleaned")
+eq(fo.locator.folder, "k3", "folder locator kept")
+eq(fo.locator.junk, nil, "null locator field dropped")
+eq(fo.subtitle, "Software Seguro", "subtitle trimmed")
+eq(table.concat(fo.path, "/"), "Software Seguro/T", "path kept, outermost first")
+eq(fo.count, 43, "count kept")
+eq(fo.size, 125829120, "size kept")
+eq(fo.cover_url, "https://c/1.jpg", "cover -> cover_url, like file rows")
+eq(fo.provider, "ucs", "provider carried until the host stamps it")
+eq(fo.author, nil, "a folder row gets no Unknown author")
+eq(fo.format, nil, "a folder row gets no epub format")
+local fnull = Entry.folder{ title = NULL, locator = { id = 1 }, subtitle = NULL, count = NULL, size = NULL,
+    path = NULL, cover = NULL }
+eq(fnull.title, "Untitled", "null folder title -> Untitled")
+eq(fnull.subtitle, nil, "null subtitle -> nil")
+eq(fnull.count, nil, "null count -> nil")
+eq(fnull.size, nil, "null size -> nil")
+eq(fnull.path, nil, "null path -> nil")
+eq(fnull.cover_url, nil, "null cover -> nil")
+eq(Entry.folder{ title = "x", locator = { id = 1 }, count = "12", size = "2048" }.count, 12, "numeric string count coerced")
+eq(Entry.folder{ title = "x", locator = { id = 1 }, size = -5 }.size, nil, "negative size dropped")
+eq(Entry.folder{ title = "x", locator = { id = 1 }, count = 0 / 0 }.count, nil, "NaN count dropped")
+eq(Entry.folder{ title = "x", locator = { id = 1 }, size = 1 / 0 }.size, nil, "infinite size dropped")
+
+print("== Folders: path and size on rows ==")
+local pth = Entry.folder{ title = "x", locator = { id = 1 },
+    path = { "  Lab01 \n Auth ", 2025, NULL, "   ", {}, true } }.path
+eq(#pth, 6, "path depth kept, whatever the elements")
+eq(pth[1], "Lab01 Auth", "path element cleaned")
+eq(pth[2], "2025", "number element -> string")
+eq(pth[3], "_", "null element -> _")
+eq(pth[4], "_", "element that cleans to nothing -> _")
+eq(pth[5], "_", "table element -> _")
+eq(pth[6], "_", "boolean element -> _")
+local capped = Entry.folder{ title = "x", locator = { id = 1 }, path = { string.rep("y", 500) } }.path[1]
+check(#capped > 0 and #capped <= 120, "path element length-capped", #capped)
+local deep = {}
+for i = 1, 40 do deep[i] = "d" .. i end
+eq(#Entry.folder{ title = "x", locator = { id = 1 }, path = deep }.path, 40, "path depth not capped")
+local rootlevel = Entry.folder{ title = "x", locator = { id = 1 }, path = {} }.path
+check(type(rootlevel) == "table" and #rootlevel == 0, "empty path {} kept: directly under the root", rootlevel)
+eq(Entry.folder{ title = "x", locator = { id = 1 }, path = "A/B" }.path, nil, "a non-table path is absent")
+local file = Entry.new{ title = "Aula 1", author = "Prof", format = "pdf", locator = { url = "https://f/1" },
+    size = 2400000, path = { "Software Seguro", "Labs" } }
+eq(file.action, "download", "file row stays a download")
+eq(file.size, 2400000, "file row size kept")
+eq(table.concat(file.path, "/"), "Software Seguro/Labs", "file row path kept")
+eq(Entry.download{ title = "x", locator = { url = "u" }, path = {} }.path and #Entry.download{
+    title = "x", locator = { url = "u" }, path = {} }.path, 0, "file row empty path kept")
+eq(Entry.new{ title = "x", locator = { url = "u" } }.size, nil, "size absent by default")
+eq(Entry.new{ title = "x", locator = { url = "u" } }.path, nil, "path absent by default")
+
+print("== Folders: Entry.new{action = folder} ==")
+local spec = { title = "T", locator = { folder = "k3" }, subtitle = "S", path = { "A" }, count = 3, size = 9,
+    cover = "https://c/2.jpg", author = "Someone", format = "pdf" }
+local via_new = Entry.new{ action = "folder", title = spec.title, locator = spec.locator, subtitle = spec.subtitle,
+    path = spec.path, count = spec.count, size = spec.size, cover = spec.cover, author = spec.author, format = spec.format }
+check(same(via_new, Entry.folder(spec)), "Entry.new{action = folder} builds the same row as Entry.folder")
+eq(via_new.action, "folder", "Entry.new keeps the folder action")
+eq(via_new.author, nil, "…with no author")
+eq(via_new.format, nil, "…and no format")
+
+print("== Folders: group heading + glyph ==")
+for __, action in ipairs(Entry.ACTION_ORDER) do
+    check(type(Glyphs[Entry.ACTION_GLYPH[action]]) == "string", "glyph for " .. action .. " exists",
+          Entry.ACTION_GLYPH[action])
+end
+eq(Glyphs.folder, Glyphs.utf8(0xF07B), "folder glyph = U+F07B (in the bundled symbols.ttf)")
+eq(Entry.ACTION_HEADING.folder, "Folders", "folder heading")
+
+print("== Folders: api 2 validation (PROVIDERS.md 2, 8.5) ==")
+local function api2(over)
+    local p = { api = 2, id = "fold", name = "Fold",
+        search = function() return {}, false end,
+        resolve = function(loc) return loc.url end,
+        list = function() return {}, false end }
+    for k, val in pairs(over or {}) do p[k] = val end
+    return p
+end
+local function why2(p) return select(2, Catalog.validate(p)) end
+check(Catalog.validate(api2()), "api 2 with list validates", why2(api2()))
+check(Catalog.validate(api2{ root = "Course materials", dedupe = false, search_in = function() end }),
+      "api 2 with root, dedupe and search_in validates")
+check(tostring(why2(api2{ list = false })):find("list", 1, true) ~= nil, "api 2 without list rejected", why2(api2{ list = false }))
+check(tostring(why2(api2{ list = "x" })):find("list", 1, true) ~= nil, "api 2 list must be a function")
+check(tostring(why2(api2{ root = "" })):find("root", 1, true) ~= nil, "empty root rejected", why2(api2{ root = "" }))
+check(tostring(why2(api2{ root = 7 })):find("root", 1, true) ~= nil, "non-string root rejected")
+check(tostring(why2(api2{ root = string.rep("r", 61) })):find("root", 1, true) ~= nil, "root over 60 bytes rejected")
+check(Catalog.validate(api2{ root = string.rep("r", 60) }), "root of 60 bytes accepted")
+check(tostring(why2(api2{ search_in = "yes" })):find("search_in", 1, true) ~= nil, "non-function search_in rejected",
+      why2(api2{ search_in = "yes" }))
+check(tostring(why2(api2{ dedupe = "no" })):find("dedupe", 1, true) ~= nil, "non-boolean dedupe rejected",
+      why2(api2{ dedupe = "no" }))
+check(tostring(why2(api2{ api = 3 })):find("api must be 1 or 2", 1, true) ~= nil, "api 3 rejected", why2(api2{ api = 3 }))
+check(why2(api2{ api = "2" }) ~= nil, "api as a string rejected")
+check(why2(api2{ api = 1.5 }) ~= nil, "api 1.5 rejected")
+
+print("== Folders: api 1 never reads the api-2 fields ==")
+local helpers = { api = 1, id = "helpy", name = "Helpy",
+    root = "https://helpy.example/api", list = function() error("api-1 helper called by the host") end,
+    search_in = "not a function", dedupe = "sometimes",
+    search = function() return {}, false end, resolve = function(loc) return loc.url end }
+check(Catalog.validate(helpers), "api 1 with helpers named root/list/search_in/dedupe validates", why2(helpers))
+check(Catalog.register(helpers), "…and registers")
+local roots_seen = {}
+for __, r in ipairs(Catalog.roots()) do roots_seen[r.provider.id] = r.title end
+eq(roots_seen.helpy, nil, "an api-1 root helper makes no Browse root")
+check(Catalog.register(api2{ id = "rooty", name = "Rooty", root = "Course materials" }), "api 2 with a root registers")
+check(Catalog.register(api2{ id = "rootless", name = "Rootless" }), "api 2 without a root registers")
+roots_seen = {}
+local root_ids = {}
+for __, r in ipairs(Catalog.roots()) do
+    roots_seen[r.provider.id] = r.title
+    root_ids[#root_ids + 1] = r.provider.id
+end
+eq(roots_seen.rooty, "Course materials", "an api-2 root is listed with its title")
+eq(roots_seen.rootless, nil, "an api-2 provider without root has none")
+eq(table.concat(root_ids, ","), "rooty", "only providers with a root are listed")
+
+print("== Folders: Catalog.stamp ==")
+local P2 = api2{ id = "stamp2", name = "Stamp Two", quality = 20 }
+local P1 = { api = 1, id = "stamp1", name = "Stamp One", search = P2.search, resolve = P2.resolve }
+local function rows_for_stamp()
+    return {
+        Entry.folder{ title = "Built", locator = { folder = "b" }, path = { "A" }, count = 2 },
+        { action = "folder", title = "Raw", locator = { folder = "r" }, subtitle = "S" },
+        Entry.new{ title = "File", author = "Prof", locator = { url = "https://f/1" }, size = 10, path = { "A", "B" } },
+    }
+end
+local st2 = Catalog.stamp(P2, rows_for_stamp())
+eq(#st2, 3, "api 2: folder rows kept")
+eq(st2[1].action, "folder", "built folder row stays a folder")
+eq(st2[1].provider, "stamp2", "folder row stamped with the provider id")
+eq(st2[1].source, "Stamp Two", "folder row stamped with the provider name")
+eq(st2[1].author, nil, "stamped folder row has no author")
+eq(st2[1].format, nil, "stamped folder row has no format")
+eq(st2[1].count, 2, "stamped folder row keeps count")
+eq(st2[2].action, "folder", "a raw folder row is normalized as a folder, not a download")
+eq(st2[2].subtitle, "S", "raw folder row keeps its subtitle")
+eq(st2[2].author, nil, "raw folder row gets no Unknown author")
+eq(st2[2].format, nil, "raw folder row gets no epub format")
+eq(st2[3].size, 10, "api 2: file size kept")
+eq(table.concat(st2[3].path, "/"), "A/B", "api 2: file path kept")
+local warned = {}
+local Logger = require("logger")
+local real_warn = Logger.warn
+Logger.warn = function(...) warned[#warned + 1] = table.concat({ tostring(select(1, ...)), tostring(select(2, ...)) }, " ") end
+local st1 = Catalog.stamp(P1, rows_for_stamp())
+Logger.warn = real_warn
+eq(#st1, 1, "api 1: folder rows dropped, built or raw")
+eq(st1[1].title, "File", "api 1: the file row stays")
+eq(st1[1].size, nil, "api 1: size stripped")
+eq(st1[1].path, nil, "api 1: path stripped")
+eq(#warned, 2, "api 1: one log line per dropped folder row")
+check((warned[1] or ""):find("folder", 1, true) ~= nil, "the log line says why", warned[1])
+
+print("== Folders: dedupe, filters, groups (DESIGN.md 12.5) ==")
+local Merge = api2{ id = "merge2", name = "Merge Two" }
+local NoMerge = api2{ id = "nomerge", name = "No Merge", dedupe = false }
+local function aula(n, loc) return Entry.new{ title = "Aula " .. n, author = "Prof", format = "pdf", locator = { url = loc } } end
+local function wk(loc) return Entry.folder{ title = "Week 1", locator = { folder = loc } } end
+local RF = Results.new({ "merge2", "nomerge" })
+RF:setProvider("merge2", Catalog.stamp(Merge, { wk("w1"), wk("w2"), wk("w1"), aula(1, "https://m/1"), aula(1, "https://m/2") }), false)
+local fl, fcol = RF:flatten()
+local titles = {}
+for i, r in ipairs(fl) do titles[i] = r.title .. "@" .. Entry.locatorKey(r.locator) end
+eq(table.concat(titles, ","), "Week 1@folder=w1,Week 1@folder=w2,Aula 1@https://m/1",
+   "same-titled folders stay apart; the same folder twice is one row; files still merge")
+eq(fcol, 2, "collapsed: the repeated folder and the second Aula 1")
+RF:setProvider("nomerge", Catalog.stamp(NoMerge, { aula(1, "https://n/1"), aula(1, "https://n/2"), aula(1, "https://n/1") }), false)
+fl = RF:flatten()
+local nm = {}
+for __, r in ipairs(fl) do if r.provider == "nomerge" then nm[#nm + 1] = r.locator.url end end
+eq(table.concat(nm, ","), "https://n/1,https://n/2", "dedupe = false: same-titled files stay apart, the same file once")
+eq(#fl, 5, "dedupe = false rows never merge with another provider's same work either")
+local api1_nomerge = Catalog.stamp({ api = 1, id = "old", name = "Old", dedupe = false }, { aula(1, "https://o/1"), aula(1, "https://o/2") })
+local RO = Results.new({ "old" })
+RO:setProvider("old", api1_nomerge, false)
+eq(#RO:flatten(), 1, "api 1 ignores a dedupe field: its rows merge as before")
+eq(#RF:flatten({ format = "pdf" }), 5, "folders pass the pdf format filter")
+eq(#RF:flatten({ format = "epub" }), 2, "folders pass the epub filter; pdf files do not")
+eq(#RF:flatten({ sources = { nomerge = true } }), 2, "folders obey the source filter")
+local grouped = Catalog.group(RF:flatten())
+eq(grouped[1].action, "folder", "folders group first")
+eq(grouped[1].heading, "Folders", "under a Folders heading")
+eq(grouped[1].glyph, "folder", "with the folder glyph")
+eq(#grouped[1].items, 2, "both folders in the group")
+eq(grouped[2].action, "download", "files after the folders")
+
+print("== Folders: Catalog.list / Catalog.searchIn (PROVIDERS.md 5.5, 5.6) ==")
+local calls = {}
+Catalog.register(api2{ id = "lister", name = "Lister", quality = 7, root = "Top",
+    list = function(loc, limit, page, ctx)
+        calls[#calls + 1] = { what = "list", loc = loc, limit = limit, page = page, ctx = ctx }
+        if loc and loc.folder == "boom" then error("list exploded") end
+        if loc and loc.folder == "gone" then return nil, "folder gone" end
+        return { ctx.Entry.folder{ title = "Sub", locator = { folder = "sub" } },
+                 ctx.Entry.new{ title = "File", locator = { url = "https://l/1" } },
+                 ctx.Entry.new{ title = "No locator" } }, page == 1 and "yes" or nil
+    end,
+    search_in = function(loc, query, limit, page, ctx)
+        calls[#calls + 1] = { what = "search_in", loc = loc, query = query, limit = limit, page = page, ctx = ctx }
+        if query == "fail" then return nil, "search broke" end
+        return { ctx.Entry.new{ title = query .. " hit", locator = { url = "https://l/q" }, path = { "Top", "Sub" } } }, false
+    end })
+local lrows, lmore = Catalog.list("lister", nil, 50, 1)
+eq(#lrows, 2, "list rows stamped; the locator-less one dropped")
+eq(lrows[1].action, "folder", "list may return folder rows")
+eq(lrows[1].provider, "lister", "list rows carry the provider id")
+eq(lrows[2].quality, 7, "list rows get the provider quality")
+eq(lmore, true, "a truthy has_more reads as true")
+eq(calls[1].loc, nil, "list(nil) asks for the root")
+eq(calls[1].limit, 50, "limit passed through")
+eq(calls[1].page, 1, "page passed through")
+eq(type(calls[1].ctx), "table", "ctx last")
+local _, lmore2 = Catalog.list("lister", { folder = "sub" }, 50, 2)
+eq(lmore2, false, "has_more absent -> false")
+eq(calls[2].loc.folder, "sub", "the folder's locator reaches list")
+eq(calls[2].page, 2, "page 2 asked")
+local lnil, lerr = Catalog.list("lister", { folder = "gone" }, 50, 1)
+check(lnil == nil and lerr == "folder gone", "list nil, reason -> nil, reason", lerr)
+lnil, lerr = Catalog.list("lister", { folder = "boom" }, 50, 1)
+check(lnil == nil and tostring(lerr):find("list exploded", 1, true) ~= nil, "a raising list is caught", lerr)
+lnil, lerr = Catalog.list("nope", nil, 50, 1)
+check(lnil == nil and tostring(lerr):find("unknown source", 1, true) ~= nil, "list: unknown source", lerr)
+local n_calls = #calls
+lnil, lerr = Catalog.list("helpy", nil, 50, 1)
+check(lnil == nil and type(lerr) == "string", "list on an api-1 provider is an error", lerr)
+eq(#calls, n_calls, "…and never calls its list helper")
+local qrows, qmore = Catalog.searchIn("lister", { folder = "sub" }, "sso", 15, 1)
+eq(#qrows, 1, "searchIn rows stamped")
+eq(qrows[1].source, "Lister", "searchIn rows carry the source")
+eq(table.concat(qrows[1].path, "/"), "Top/Sub", "searchIn rows keep their path")
+eq(qmore, false, "searchIn has_more is a boolean")
+local last = calls[#calls]
+eq(last.what, "search_in", "search_in called")
+eq(last.loc.folder, "sub", "searchIn passes the folder locator")
+eq(last.query, "sso", "…the query")
+eq(last.limit, 15, "…the search page size")
+eq(last.page, 1, "…and the page")
+Catalog.searchIn("lister", nil, "x", 10, 1)
+eq(calls[#calls].loc, nil, "searchIn(nil) searches the root")
+local qnil, qerr = Catalog.searchIn("lister", nil, "fail", 10, 1)
+check(qnil == nil and qerr == "search broke", "searchIn nil, reason -> nil, reason", qerr)
+qnil, qerr = Catalog.searchIn("rooty", nil, "x", 10, 1)
+check(qnil == nil and type(qerr) == "string", "searchIn without search_in is an error", qerr)
+qnil, qerr = Catalog.searchIn("helpy", nil, "x", 10, 1)
+check(qnil == nil and type(qerr) == "string", "searchIn on an api-1 provider is an error", qerr)
 end)()
 
 ---------------------------------------------------------------------------

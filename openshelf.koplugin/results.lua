@@ -13,6 +13,7 @@ name enters is the label function the view hands to errors().
 Pure Lua — no KOReader dependencies.
 --]]
 local Dedupe = require("dedupe")
+local Entry = require("entry")
 
 local Results = {}
 Results.__index = Results
@@ -113,11 +114,12 @@ function Results:pageOf(id)
 end
 
 -- filter.sources is a set of provider ids (nil = all); filter.format is
--- "any" | "epub" | "pdf".
+-- "any" | "epub" | "pdf". Folder rows have no format and pass any.
 local function passes(e, filter)
     if not filter then return true end
     if filter.sources and not filter.sources[e.provider] then return false end
-    if filter.format and filter.format ~= "any" and (e.format or "epub") ~= filter.format then
+    if filter.format and filter.format ~= "any" and e.action ~= Entry.ACTION.FOLDER
+        and (e.format or "epub") ~= filter.format then
         return false
     end
     return true

@@ -11,7 +11,7 @@ Entry shape:
     title, author,                  -- display
     provider = "gutendex",          -- provider id: the key (slots, settings, Entry.id, library)
     source   = "Project Gutenberg", -- provider display name, for labels only
-    action  = Entry.ACTION.*,       -- download | borrow | buy
+    action  = Entry.ACTION.*,       -- download | borrow | buy | folder (api 2)
     format  = "epub" | "pdf",       -- display + download extension
     quality = number,               -- higher wins when deduping editions (provider's by default)
     dedup_key = string,             -- normalized title+author signature
@@ -19,7 +19,14 @@ Entry shape:
     locator = { url = … } | { identifier = … },   -- provider-specific, JSON-safe
     alternates = { {format=, locator=}, … } | nil, -- other formats of the same book
     description, language, year     -- optional metadata (nil when unknown)
+    size = bytes | nil,             -- api 2: summed by Download all
+    path = { "Course", "Labs" } | nil,  -- api 2: folder titles above the row, outermost first
+    dedupe = false | nil,           -- host (Catalog.stamp): its provider opted out; never merged
   }
+
+A folder row (api 2, PROVIDERS.md §4.5) has `action = "folder"`, title,
+provider, source, locator, cover_url, path, `subtitle`, `count` (files) and
+`size`, and none of the file defaults: no author, no format.
 --]]
 local Entry = {}
 
@@ -27,17 +34,20 @@ Entry.ACTION = {
     DOWNLOAD = "download",
     BORROW   = "borrow",
     BUY      = "buy",
+    FOLDER   = "folder",
 }
 
 -- Display order + headings for grouping in the results view. Headings are
 -- plain text; the view prefixes the glyph named in ACTION_GLYPH (see glyphs.lua).
-Entry.ACTION_ORDER = { "download", "borrow", "buy" }
+Entry.ACTION_ORDER = { "folder", "download", "borrow", "buy" }
 Entry.ACTION_HEADING = {
+    folder   = "Folders",
     download = "Download",
     borrow   = "Borrow",
     buy      = "Buy",
 }
 Entry.ACTION_GLYPH = {
+    folder   = "folder",
     download = "download",
     borrow   = "book",
     buy      = "cart",
@@ -135,6 +145,27 @@ local function clean_alternates(list)
     return out
 end
 
+-- A non-negative finite number (bytes, file counts), else nil.
+local function amount(v)
+    local n = tonumber(v)
+    if not n or n ~= n or n < 0 or n == math.huge then return nil end
+    return n
+end
+
+-- Folder titles above a row, outermost first (PROVIDERS.md §4.5). The depth
+-- is kept as given: numbers become strings, and anything that is not a
+-- usable string becomes "_". `{}` stays `{}`: "directly under the root".
+local PATH_ELEMENT_MAX = 120
+local function clean_path(list)
+    if type(list) ~= "table" then return nil end
+    local out = {}
+    for i, v in ipairs(list) do
+        if type(v) == "number" then v = tostring(v) end
+        out[i] = clean(v, PATH_ELEMENT_MAX) or "_"
+    end
+    return out
+end
+
 local ACTION_SET = {}
 for __, a in ipairs(Entry.ACTION_ORDER) do ACTION_SET[a] = true end
 
@@ -157,13 +188,39 @@ local function build(t, action)
         language    = clean(t.language, 16),
         year        = clean(t.year, 8),
         price       = clean(t.price, 32),      -- buy rows only
+        size        = amount(t.size),
+        path        = clean_path(t.path),
+    }
+end
+
+--- A folder row (api 2, PROVIDERS.md §4.5): { title, locator, cover?,
+-- subtitle?, path?, count?, size? }. Carries a dedup_key like every built
+-- row, so Catalog.stamp keeps it as built; dedupe never merges folders.
+function Entry.folder(t)
+    t = t or {}
+    local title = clean(t.title, 300) or "Untitled"
+    return {
+        title     = title,
+        provider  = clean(t.provider, 32),
+        source    = clean(t.source, 60),
+        action    = Entry.ACTION.FOLDER,
+        quality   = tonumber(t.quality),
+        dedup_key = Entry.makeKey(title, ""),
+        cover_url = clean(t.cover, 1000),
+        locator   = clean_locator(t.locator),
+        subtitle  = clean(t.subtitle, 300),
+        path      = clean_path(t.path),
+        count     = amount(t.count),
+        size      = amount(t.size),
     }
 end
 
 --- Build an entry from provider data (PROVIDERS.md §4.1). `action` is
--- "download" (default), "borrow" or "buy"; anything else is a download.
+-- "download" (default), "borrow", "buy" or "folder" (= Entry.folder);
+-- anything else is a download.
 function Entry.new(t)
     t = t or {}
+    if t.action == Entry.ACTION.FOLDER then return Entry.folder(t) end
     local action = ACTION_SET[t.action] and t.action or Entry.ACTION.DOWNLOAD
     return build(t, action)
 end
