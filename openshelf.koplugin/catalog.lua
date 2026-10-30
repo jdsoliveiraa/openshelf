@@ -96,7 +96,7 @@ function Catalog.validate(p)
         if p.search_in ~= nil and type(p.search_in) ~= "function" then
             return false, "search_in must be a function"
         end
-        if p.root ~= nil and (type(p.root) ~= "string" or p.root == "" or #p.root > 60) then
+        if p.root ~= nil and (type(p.root) ~= "string" or not p.root:find("%S") or #p.root > 60) then
             return false, "bad root (want a non-empty string of at most 60 bytes)"
         end
         if p.dedupe ~= nil and type(p.dedupe) ~= "boolean" then
@@ -281,32 +281,30 @@ function Catalog.stamp(provider, entries)
     return out
 end
 
---- One provider (by id), one page. Safe to call inside a subprocess.
-function Catalog.searchOne(id, query, limit, page)
-    local provider = Catalog.byId(id)
-    if not provider then return nil, "unknown source " .. tostring(id) end
-    local ok, res, extra = pcall(provider.search, query, limit, page, Catalog.ctxFor(provider))
-    if not ok then return nil, tostring(res) end
-    if not res then return nil, extra or "unknown error" end
-    return Catalog.stamp(provider, res), extra and true or false
-end
-
---- An api-2 provider by id that defines function `name` (list / search_in),
--- or nil + reason. api-1 tables are never asked: those fields are theirs.
-local function folder_provider(id, name)
-    local provider = Catalog.byId(id)
-    if not provider then return nil, "unknown source " .. tostring(id) end
-    if provider.api ~= 2 or type(provider[name]) ~= "function" then
-        return nil, provider.name .. " has no " .. name
-    end
-    return provider
-end
-
 -- A pcall'd provider page → stamped rows, boolean has_more | nil, err.
 local function stamped_page(provider, ok, res, extra)
     if not ok then return nil, tostring(res) end
     if not res then return nil, extra or "unknown error" end
     return Catalog.stamp(provider, res), extra and true or false
+end
+
+--- One provider (by id), one page. Safe to call inside a subprocess.
+function Catalog.searchOne(id, query, limit, page)
+    local provider = Catalog.byId(id)
+    if not provider then return nil, "unknown source " .. tostring(id) end
+    return stamped_page(provider, pcall(provider.search, query, limit, page, Catalog.ctxFor(provider)))
+end
+
+--- An api-2 provider by id that defines the function `fn_name` (list /
+-- search_in), or nil + reason. api-1 tables are never asked: those fields
+-- are theirs.
+local function folder_provider(id, fn_name)
+    local provider = Catalog.byId(id)
+    if not provider then return nil, "unknown source " .. tostring(id) end
+    if provider.api ~= 2 or type(provider[fn_name]) ~= "function" then
+        return nil, provider.name .. " has no " .. fn_name
+    end
+    return provider
 end
 
 --- One folder, one page (PROVIDERS.md §5.5); `locator` nil = the root.

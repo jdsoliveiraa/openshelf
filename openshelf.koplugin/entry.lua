@@ -152,14 +152,17 @@ local function amount(v)
     return n
 end
 
--- Folder titles above a row, outermost first (PROVIDERS.md §4.5). The depth
--- is kept as given: numbers become strings, and anything that is not a
--- usable string becomes "_". `{}` stays `{}`: "directly under the root".
 local PATH_ELEMENT_MAX = 120
+
+-- Folder titles above a row, outermost first (PROVIDERS.md §4.5). The depth
+-- is kept as given, nil gaps included (dkjson decodes null to a gap):
+-- numbers become strings, and anything that is not a usable string becomes
+-- "_". `{}` stays `{}`: "directly under the root".
 local function clean_path(list)
     if type(list) ~= "table" then return nil end
     local out = {}
-    for i, v in ipairs(list) do
+    for i = 1, table.maxn(list) do
+        local v = list[i]
         if type(v) == "number" then v = tostring(v) end
         out[i] = clean(v, PATH_ELEMENT_MAX) or "_"
     end

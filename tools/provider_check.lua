@@ -142,6 +142,16 @@ local function locator_problem(loc)
     return nil
 end
 
+-- Rows of page2 whose locator identity already appeared on page1.
+local function count_repeats(page1, page2)
+    local shown, repeats = {}, 0
+    for __, r in ipairs(page1) do shown[Entry.locatorKey(r.locator)] = true end
+    for __, r in ipairs(page2) do
+        if shown[Entry.locatorKey(r.locator)] then repeats = repeats + 1 end
+    end
+    return repeats
+end
+
 local VALID_ACTION = {}
 for __, a in pairs(Entry.ACTION) do VALID_ACTION[a] = true end
 
@@ -308,11 +318,7 @@ function Check.run(opts)
         if page1 and more then
             local page2 = browse_page(shelf, 2)
             if page2 then
-                local shown, repeats = {}, 0
-                for ___, r in ipairs(page1) do shown[Entry.locatorKey(r.locator)] = true end
-                for ___, r in ipairs(page2) do
-                    if shown[Entry.locatorKey(r.locator)] then repeats = repeats + 1 end
-                end
+                local repeats = count_repeats(page1, page2)
                 if repeats > 0 then
                     fail("shelf " .. shelf.key .. " p2", ("repeats %d row(s) of page 1 (is `page` ignored?)"):format(repeats))
                 else
@@ -360,11 +366,7 @@ function Check.run(opts)
             if not page1 or not more then return page1 end
             local page2 = list_page(label, locator, 2)
             if page2 then
-                local shown, repeats = {}, 0
-                for __, r in ipairs(page1) do shown[Entry.locatorKey(r.locator)] = true end
-                for __, r in ipairs(page2) do
-                    if shown[Entry.locatorKey(r.locator)] then repeats = repeats + 1 end
-                end
+                local repeats = count_repeats(page1, page2)
                 if repeats > 0 then
                     fail("folders", ("%s p2 repeats %d row(s) of page 1 (is `page` ignored?)"):format(label, repeats))
                 end

@@ -1672,6 +1672,8 @@ for i = 1, 40 do deep[i] = "d" .. i end
 eq(#Entry.folder{ title = "x", locator = { id = 1 }, path = deep }.path, 40, "path depth not capped")
 local rootlevel = Entry.folder{ title = "x", locator = { id = 1 }, path = {} }.path
 check(type(rootlevel) == "table" and #rootlevel == 0, "empty path {} kept: directly under the root", rootlevel)
+local gapped = Entry.folder{ title = "x", locator = { id = 1 }, path = { "a", nil, "c" } }.path
+eq(table.concat(gapped, "/"), "a/_/c", "a nil gap (dkjson's null) keeps the depth")
 eq(Entry.folder{ title = "x", locator = { id = 1 }, path = "A/B" }.path, nil, "a non-table path is absent")
 local file = Entry.new{ title = "Aula 1", author = "Prof", format = "pdf", locator = { url = "https://f/1" },
     size = 2400000, path = { "Software Seguro", "Labs" } }
@@ -1720,6 +1722,7 @@ check(tostring(why2(api2{ root = "" })):find("root", 1, true) ~= nil, "empty roo
 check(tostring(why2(api2{ root = 7 })):find("root", 1, true) ~= nil, "non-string root rejected")
 check(tostring(why2(api2{ root = string.rep("r", 61) })):find("root", 1, true) ~= nil, "root over 60 bytes rejected")
 check(Catalog.validate(api2{ root = string.rep("r", 60) }), "root of 60 bytes accepted")
+check(tostring((why2(api2{ root = "   " }))):find("root", 1, true) ~= nil, "whitespace-only root rejected (a blank chip)")
 check(tostring(why2(api2{ search_in = "yes" })):find("search_in", 1, true) ~= nil, "non-function search_in rejected",
       why2(api2{ search_in = "yes" }))
 check(tostring(why2(api2{ dedupe = "no" })):find("dedupe", 1, true) ~= nil, "non-boolean dedupe rejected",

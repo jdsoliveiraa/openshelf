@@ -74,17 +74,20 @@ local TREE = {
       year = "1920", gutenberg = 37134, size = 73000 },
 }
 
+-- A new path: `path` plus one more folder title.
+local function below(path, title)
+    local out = {}
+    for i, t in ipairs(path) do out[i] = t end
+    out[#out + 1] = title
+    return out
+end
+
 -- Every node under `items`, depth first, with the folder titles above it
 -- (outermost first, without the root: what `path` wants).
 local function walk(items, path, visit)
     for __, node in ipairs(items) do
         visit(node, path)
-        if node.items then
-            local below = {}
-            for i, title in ipairs(path) do below[i] = title end
-            below[#below + 1] = node.title
-            walk(node.items, below, visit)
-        end
+        if node.items then walk(node.items, below(path, node.title), visit) end
     end
 end
 
@@ -136,10 +139,7 @@ local function folder_items(locator)
     if locator == nil then return TREE, {} end
     local hit = type(locator) == "table" and FOLDERS[locator.folder]
     if not hit then return nil end
-    local below = {}
-    for i, title in ipairs(hit.path) do below[i] = title end
-    below[#below + 1] = hit.node.title
-    return hit.node.items, below
+    return hit.node.items, below(hit.path, hit.node.title)
 end
 
 local function find(items, path, query, limit, page, ctx)
