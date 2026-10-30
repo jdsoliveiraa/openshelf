@@ -4,8 +4,9 @@
 > `DESIGN.md` §9 (decisions 37–57, grilled 2026-10-26). Status: **implemented**
 > as of v0.6.0 — the built-ins and the host both use api 1.
 > **api 2** = api 1 + folders (§4.5, §5.5, §5.6; `DESIGN.md` §12, decisions
-> 68–86, grilled 2026-10-29). Status: **specified, not implemented**; it
-> ships in v0.8.0. Until then a host rejects `api = 2`.
+> 68–86, grilled 2026-10-29). Status: **being built**; it ships in v0.8.0
+> (the catalog side and the dev kit are on `main`, the folder screens are
+> not yet). Released hosts before v0.8.0 reject `api = 2`.
 
 A **provider** turns one catalog into OpenShelf search results and download
 URLs. Project Gutenberg, Internet Archive and DOAB are providers; so is
@@ -474,12 +475,13 @@ the others and never shows a modal.
   higher-quality one exists elsewhere.
 - Downloads go to `/mnt/onboard/OpenShelf/<Author> - <Title>.<format>` and
   are recorded in My books with your `id`, `name` and the locator. From
-  v0.8.0, for every provider, a name another My books record already owns
-  gets ` (2)`, ` (3)`…, and a file with no record at the name is taken to
-  be this one and replaced on download. Files
+  v0.8.0, for every provider, a file already in My books always goes back
+  to its recorded path; otherwise a name another My books record already
+  owns gets ` (2)`, ` (3)`…, and a file with no record at the name is taken
+  to be this one and replaced on download. Files
   from folders (api 2) mirror the folders instead:
-  `OpenShelf/<name>/<folders…>/<Title>.<format>`. A file already in My books
-  always goes back to its recorded path. Otherwise, first match wins: the
+  `OpenShelf/<name>/<folders…>/<Title>.<format>`. For a file without a
+  record, first match wins: the
   file row's own `path`; else, when `list` returned it, that folder's
   directory; else flat, as above. A folder's directory is its row's `path`
   plus its title; without `path`, the directory of the folder that listed

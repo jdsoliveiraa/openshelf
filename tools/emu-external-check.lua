@@ -64,7 +64,7 @@ end, "first open")
 at(1, function()
     copy(EXAMPLE, DIR .. "/gutenberg_pt.lua")
     local f = assert(io.open(DIR .. "/broken_api.lua", "w"))
-    f:write([[return { api = 2, id = "brokenapi", name = "Broken API",
+    f:write([[return { api = 3, id = "brokenapi", name = "Broken API",
         search = function() return {}, false end, resolve = function() end }]])
     f:close()
     App.exitAll()

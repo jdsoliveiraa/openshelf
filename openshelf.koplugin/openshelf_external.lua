@@ -110,8 +110,8 @@ External.README = [[
 OpenShelf drop-in providers
 ===========================
 
-Copy a Lua file that returns an OpenShelf provider table (api 1) into this
-folder. The file name does not matter; the provider's id comes from the table.
+Copy a Lua file that returns an OpenShelf provider table (api 1 or 2) into
+this folder. The file name does not matter; the provider's id comes from the table.
 
 Files are scanned every time OpenShelf opens, but each file is loaded only
 once per KOReader process: restart KOReader after adding or editing one.

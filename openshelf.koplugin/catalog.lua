@@ -1,5 +1,5 @@
 --[[
-Provider registry (PROVIDERS.md api 1, DESIGN.md §9) + the catalog operations
+Provider registry (PROVIDERS.md api 1 and 2, DESIGN.md §9, §12) + the catalog operations
 that are not UI:
   Catalog.register(p)                         -> true | false, reason   (validates; duplicates lose)
   Catalog.validate(p)                         -> true | false, reason   (pure contract check)
@@ -11,11 +11,14 @@ that are not UI:
   Catalog.check(id)                           -> ok, message   (Test connection)
   Catalog.stamp(provider, entries)            -> rows with provider/source/quality set by the host
   Catalog.searchOne(id, query, limit, page)   -> entries, has_more | nil, err
+  Catalog.list(id, locator, limit, page)      -> entries, has_more | nil, err   (api 2; nil locator = root)
+  Catalog.searchIn(id, locator, query, limit, page) -> entries, has_more | nil, err   (api 2)
   Catalog.searchAll(query, opts)              -> entries, errors, collapsed (sequential; tests)
   Catalog.resolve(entry)                      -> { url, headers } | nil, err
   Catalog.normalizeResolve(value, err)        -> the same, from a provider's raw return (pure)
   Catalog.shelves(stored)                     -> { {id="<provider id>:<key>", key, title, provider}, … }
   Catalog.browse(shelf_id, limit, page)       -> entries, has_more | nil, err
+  Catalog.roots(stored)                       -> { {title, provider}, … }   (api-2 roots, source order)
   Catalog.group(entries)                      -> { {action, heading, items}, … }
 
 Built-ins are listed in openshelf_providers.lua and registered at load through
@@ -54,8 +57,8 @@ function Catalog.validate(p)
     if not valid_id(p.id) then
         return false, "bad id " .. tostring(p.id) .. " (want ^[a-z][a-z0-9_]*$, max 32 bytes)"
     end
-    if p.api ~= 1 or type(p.api) ~= "number" then
-        return false, "api must be 1 (got " .. tostring(p.api) .. ")"
+    if type(p.api) ~= "number" or (p.api ~= 1 and p.api ~= 2) then
+        return false, "api must be 1 or 2 (got " .. tostring(p.api) .. ")"
     end
     if type(p.name) ~= "string" or p.name == "" or #p.name > 60 then
         return false, "bad name (want a string of at most 60 bytes)"
@@ -85,6 +88,19 @@ function Catalog.validate(p)
             if type(shelf.title) ~= "string" or shelf.title == "" then
                 return false, "shelf " .. shelf.key .. " needs a title"
             end
+        end
+    end
+    -- api 2 (folders): on api 1 these are unknown fields, never read here.
+    if p.api == 2 then
+        if type(p.list) ~= "function" then return false, "missing list function (api 2)" end
+        if p.search_in ~= nil and type(p.search_in) ~= "function" then
+            return false, "search_in must be a function"
+        end
+        if p.root ~= nil and (type(p.root) ~= "string" or not p.root:find("%S") or #p.root > 60) then
+            return false, "bad root (want a non-empty string of at most 60 bytes)"
+        end
+        if p.dedupe ~= nil and type(p.dedupe) ~= "boolean" then
+            return false, "dedupe must be true or false"
         end
     end
     return Fields.validate(p.settings)
@@ -234,9 +250,12 @@ end
 -- `provider`/`source` are always the registered ones, a missing `quality`
 -- becomes the provider's (then capped below any download for borrow/buy
 -- rows), and a row without a usable locator is dropped with a log line.
--- Rows that skipped ctx.Entry are normalised first.
+-- Rows that skipped ctx.Entry are normalised first (a raw `action =
+-- "folder"` row becomes a folder row). api 1 knows nothing of folders: its
+-- folder rows are dropped with a log line and `size` / `path` stripped.
 function Catalog.stamp(provider, entries)
     local out = {}
+    local api2 = provider.api == 2
     for __, e in ipairs(type(entries) == "table" and entries or {}) do
         if type(e) == "table" then
             if e.dedup_key == nil then
@@ -245,7 +264,12 @@ function Catalog.stamp(provider, entries)
             end
             if Entry.locatorKey(e.locator) == "" then
                 logger.warn("OpenShelf: dropped row without a locator", provider.id, e.title)
+            elseif e.action == Entry.ACTION.FOLDER and not api2 then
+                logger.warn("OpenShelf: dropped a folder row (folders need api 2)", provider.id, e.title)
             else
+                if not api2 then e.size, e.path = nil, nil end
+                -- Dedupe reads this: false = never merged (api 2 `dedupe = false`)
+                if api2 and provider.dedupe == false then e.dedupe = false else e.dedupe = nil end
                 e.provider = provider.id
                 e.source = provider.name
                 if e.quality == nil then e.quality = provider.quality or 0 end
@@ -257,14 +281,47 @@ function Catalog.stamp(provider, entries)
     return out
 end
 
+-- A pcall'd provider page → stamped rows, boolean has_more | nil, err.
+local function stamped_page(provider, ok, res, extra)
+    if not ok then return nil, tostring(res) end
+    if not res then return nil, extra or "unknown error" end
+    return Catalog.stamp(provider, res), extra and true or false
+end
+
 --- One provider (by id), one page. Safe to call inside a subprocess.
 function Catalog.searchOne(id, query, limit, page)
     local provider = Catalog.byId(id)
     if not provider then return nil, "unknown source " .. tostring(id) end
-    local ok, res, extra = pcall(provider.search, query, limit, page, Catalog.ctxFor(provider))
-    if not ok then return nil, tostring(res) end
-    if not res then return nil, extra or "unknown error" end
-    return Catalog.stamp(provider, res), extra and true or false
+    return stamped_page(provider, pcall(provider.search, query, limit, page, Catalog.ctxFor(provider)))
+end
+
+--- An api-2 provider by id that defines the function `fn_name` (list /
+-- search_in), or nil + reason. api-1 tables are never asked: those fields
+-- are theirs.
+local function folder_provider(id, fn_name)
+    local provider = Catalog.byId(id)
+    if not provider then return nil, "unknown source " .. tostring(id) end
+    if provider.api ~= 2 or type(provider[fn_name]) ~= "function" then
+        return nil, provider.name .. " has no " .. fn_name
+    end
+    return provider
+end
+
+--- One folder, one page (PROVIDERS.md §5.5); `locator` nil = the root.
+-- Safe inside a subprocess, like searchOne.
+function Catalog.list(id, locator, limit, page)
+    local provider, err = folder_provider(id, "list")
+    if not provider then return nil, err end
+    return stamped_page(provider, pcall(provider.list, locator, limit, page, Catalog.ctxFor(provider)))
+end
+
+--- Scoped search in one folder and below (PROVIDERS.md §5.6); `locator`
+-- nil = the root. Safe inside a subprocess.
+function Catalog.searchIn(id, locator, query, limit, page)
+    local provider, err = folder_provider(id, "search_in")
+    if not provider then return nil, err end
+    return stamped_page(provider,
+        pcall(provider.search_in, locator, query, limit, page, Catalog.ctxFor(provider)))
 end
 
 --- Sequential search across enabled providers (used by the headless test and
@@ -356,6 +413,20 @@ function Catalog.shelves(stored)
         for ___, shelf in ipairs(p.shelves or {}) do
             out[#out + 1] = { id = p.id .. ":" .. shelf.key, key = shelf.key,
                               title = shelf.title, provider = p }
+        end
+    end
+    return out
+end
+
+--- Browse roots (DESIGN.md §12.3): { {title, provider}, … } for every
+-- registered api-2 provider that declares `root`, in source order
+-- (`stored` as in Catalog.shelves). Enabled / set-up filtering is the
+-- caller's, as for shelves.
+function Catalog.roots(stored)
+    local out = {}
+    for __, p in ipairs(Catalog.ordered(stored)) do
+        if p.api == 2 and p.root ~= nil then
+            out[#out + 1] = { title = p.root, provider = p }
         end
     end
     return out
