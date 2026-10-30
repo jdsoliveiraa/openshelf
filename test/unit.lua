@@ -2019,6 +2019,58 @@ fails_with({ api = 1, id = "oldfold", name = "Old Fold",
         return { ctx.Entry.folder{ title = "F", locator = { folder = "f" } },
                  ctx.Entry.new{ title = "x", locator = { url = "https://o/x" } } }, false
     end, resolve = function(loc) return loc.url end }, "folders need api = 2", "an api-1 provider returning folder rows fails the rows step")
+
+print("== Folders demo drop-in (examples/folders_demo.lua) ==")
+local DEMO = this .. "../examples/folders_demo.lua"
+local demo_lines = {}
+local ok_demo, demo_fails = Check.run{ file = DEMO, offline = true,
+    out = function(l) demo_lines[#demo_lines + 1] = l end }
+local demo_text = table.concat(demo_lines, "\n")
+check(ok_demo == true, "folders demo passes the offline check", table.concat(demo_fails or {}, " | "))
+check(demo_text:find("ok    folders", 1, true) ~= nil, "…and prints the folders step", demo_text)
+check(demo_text:find("ok    search_in", 1, true) ~= nil, "…including search_in", demo_text)
+local demo = dofile(DEMO)
+eq(demo.api, 2, "demo is an api-2 provider")
+check(type(demo.root) == "string", "demo declares a root")
+local dctx = Catalog.ctxFor(demo)
+local pp = Catalog.stamp(demo, (demo.search("pride and prejudice", 10, 1, dctx)))
+eq(#pp, 2, "two same-named files in different folders")
+eq(pp[1].title, pp[2].title, "…with the same title")
+check(table.concat(pp[1].path, "/") ~= table.concat(pp[2].path, "/"), "…and different paths",
+      table.concat(pp[1].path, "/"))
+check(Entry.id(pp[1]) ~= Entry.id(pp[2]), "…and different identities")
+local RD = Results.new({ demo.id })
+RD:setProvider(demo.id, pp, false)
+eq(#RD:flatten(), 2, "dedupe = false keeps both editions in search")
+local style = demo.search("elements of style", 10, 1, dctx)
+check(style[1] and type(style[1].path) == "table" and #style[1].path == 0,
+      "a file directly under the root is found with path {}")
+local top = demo.list(nil, 50, 1, dctx)
+local kinds = {}
+for i, r in ipairs(top) do kinds[i] = r.action end
+eq(table.concat(kinds, ","), "folder,folder,download", "the root holds two folders and a file")
+local folder_ids, file_ids = {}, {}
+local function walk(listing)
+    for __, r in ipairs(listing) do
+        if r.action == "folder" then
+            folder_ids[Entry.locatorKey(r.locator)] = true
+            walk((demo.list(r.locator, 50, 1, dctx)))
+        else
+            file_ids[Entry.locatorKey(r.locator)] = true
+        end
+    end
+end
+walk(top)
+local clash = false
+for k in pairs(folder_ids) do if file_ids[k] then clash = true end end
+check(next(folder_ids) ~= nil and next(file_ids) ~= nil and not clash, "folder and file locators never share an identity")
+local nested = demo.search("gothic", 10, 1, dctx)
+eq(nested[1] and nested[1].action, "folder", "search finds a nested folder")
+eq(nested[1] and table.concat(nested[1].path, "/"), "Literature 201/Seminar", "…with its path")
+local in201 = demo.search_in(top[2].locator, "pride", 10, 1, dctx)
+eq(#in201, 1, "search_in finds only the edition inside that folder")
+eq(in201[1] and table.concat(in201[1].path, "/"), "Literature 201/Week 1", "…with its full path from the root")
+check(demo.search_in({ folder = "nope" }, "pride", 10, 1, dctx) == nil, "search_in on an unknown folder fails")
 end)()
 
 ---------------------------------------------------------------------------
