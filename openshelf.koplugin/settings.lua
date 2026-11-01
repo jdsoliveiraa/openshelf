@@ -124,14 +124,31 @@ function Settings.setShelvesOnHome(p, on)
     save("shelves_hidden", hidden)
 end
 
+-- Ids of the sources that are enabled and not in Needs setup, as a set.
+local function usable_set()
+    local set = {}
+    for __, id in ipairs(Settings.enabledIds(Settings.orderedProviders())) do set[id] = true end
+    return set
+end
+
 -- The shelves home shows, in source order: those of sources that are
 -- enabled, not in Needs setup, and have "Shelves on home" on.
 function Settings.homeShelves()
-    local shown = {}
-    for __, id in ipairs(Settings.enabledIds(Settings.orderedProviders())) do shown[id] = true end
+    local shown = usable_set()
     local out = {}
     for __, shelf in ipairs(Catalog.shelves(Settings.sourceOrder())) do
         if shown[shelf.provider.id] and Settings.shelvesOnHome(shelf.provider) then out[#out + 1] = shelf end
+    end
+    return out
+end
+
+-- Home's Browse chips (DESIGN.md §12.3, decision 71), in source order: the
+-- roots of api-2 sources that are enabled and not in Needs setup. No toggle.
+function Settings.browseRoots()
+    local shown = usable_set()
+    local out = {}
+    for __, r in ipairs(Catalog.roots(Settings.sourceOrder())) do
+        if shown[r.provider.id] then out[#out + 1] = r end
     end
     return out
 end

@@ -1,0 +1,260 @@
+-- Folders walkthrough for the KOReader emulator (#17, DESIGN.md §12.3-12.5).
+-- Built-ins off; examples/folders_demo.lua registered as the only source,
+-- extended here with what the demo tree lacks: an empty folder and a folder
+-- whose first listing fails (Retry then works) under the root, and a
+-- "Courses" shelf holding the root's folder rows. Then: the Browse chip ->
+-- two nested levels (list and grid) -> Back -> the ancestor jump from the
+-- title menu -> a folder row in search results -> a folder tile on a shelf
+-- -> the empty folder -> the failing folder and Retry, and the folder guards
+-- (downloader refuses, hold does nothing). Logs CHECK lines (PASS/FAIL).
+-- Run: KOREADER_SRC=… scripts/emu.sh --walk tools/emu-folders-check.lua --shots <dir>. Dev only.
+local UIManager = require("ui/uimanager")
+local Screen = require("device").screen
+local App = require("app")
+local Browse = require("browse")
+local Catalog = require("catalog")
+local Downloader = require("downloader")
+local Folders = require("openshelf_folders")
+local Settings = require("settings")
+local Shelf = require("widget_shelf")
+local OUT = os.getenv("OPENSHELF_SHOT_DIR")
+local REPO = (debug.getinfo(1, "S").source:match("^@(.*/)tools/") or "./")
+local step = 0
+local function log(...) print("DEVSCRIPT", os.date("%H:%M:%S"), ...) end
+local function shot(name)
+    step = step + 1
+    local path = string.format("%s/%02d-%s.png", OUT, step, name)
+    local ok, err = pcall(function() return Screen:shot(path) end)
+    log("shot", path, ok, err)
+end
+local function check(label, ok, detail)
+    log("CHECK", label, ok and "PASS" or "FAIL", detail ~= nil and tostring(detail) or "")
+end
+-- Steps run in sequence, each `delay` seconds after the previous one ran
+-- (inline jobs can block the loop; absolute timers would all fire at once).
+local steps = {}
+local function at(delay, fn, label) steps[#steps + 1] = { delay = delay, fn = fn, label = label } end
+local function run(i)
+    local st = steps[i]
+    if not st then return end
+    UIManager:scheduleIn(st.delay, function()
+        local ok, err = pcall(st.fn)
+        log(st.label or "", ok and "ok" or ("ERR " .. tostring(err)))
+        run(i + 1)
+    end)
+end
+local function top() return App.views[#App.views] end
+local function home() return App.homeView() end
+local function titles(list)
+    local t = {}
+    for i, v in ipairs(list) do t[i] = v.title end
+    return table.concat(t, " > ")
+end
+-- Tap the centre of a hit rectangle a view built, through its own onTap
+-- (the path a finger takes).
+local function tap(view, hit)
+    view:onTap(nil, { pos = { x = hit.x + math.floor(hit.w / 2), y = hit.y + math.floor(hit.h / 2) } })
+end
+local function row_named(title, entries)
+    for __, e in ipairs(entries or top().entries) do
+        if e.title == title then return e end
+    end
+end
+-- The title menu (a ButtonDialog) wherever it sits in the window stack: a
+-- fresh emulator home can show a first-run notice on top of it.
+local function menu()
+    for i = #UIManager._window_stack, 1, -1 do
+        local w = UIManager._window_stack[i].widget
+        if w.buttontable and w.buttons then return w end
+    end
+end
+local function dump(label)
+    local v = top()
+    log(label, "VIEW", v.title, "rows", #(v.entries or {}), "status", v.statusLine and v:statusLine() or "")
+    for i, e in ipairs(v.entries or {}) do
+        log(("ROW %02d | %-8s | %s | count=%s size=%s"):format(i, e.action, e.title, tostring(e.count), tostring(e.size)))
+    end
+end
+-- Widget-less full-screen "ui" refreshes (what ViewBase:onCloseWidget queues).
+local full_ui = 0
+local orig = UIManager.setDirty
+UIManager.setDirty = function(self, widget, refreshtype, ...)
+    if widget == nil and type(refreshtype) == "function" then
+        local mode, region = refreshtype()
+        if mode == "ui" and region and region.x == 0 and region.y == 0
+                and region.w == Screen:getWidth() and region.h == Screen:getHeight() then
+            full_ui = full_ui + 1
+        end
+    end
+    return orig(self, widget, refreshtype, ...)
+end
+
+local BUILTINS = { "gutendex", "internetarchive", "doab" }
+local function set_builtins(enabled)
+    for __, id in ipairs(BUILTINS) do Settings.setEnabled(Catalog.byId(id), enabled) end
+end
+
+-- The demo drop-in, plus an empty and a failing folder and a shelf.
+local demo = dofile(REPO .. "examples/folders_demo.lua")
+local demo_list = demo.list
+local broken_calls = 0
+demo.list = function(loc, limit, page, ctx)
+    if loc and loc.folder == "emu-empty" then return {}, false end
+    if loc and loc.folder == "emu-broken" then
+        broken_calls = broken_calls + 1
+        if broken_calls == 1 then return nil, "the server said no (emu check)" end
+        return { ctx.Entry.new{ title = "Recovered file", author = "Nobody",
+            locator = { file = "emu-recovered" } } }, false
+    end
+    local rows, more = demo_list(loc, limit, page, ctx)
+    if loc == nil and rows then
+        rows[#rows + 1] = ctx.Entry.folder{ title = "Empty folder", locator = { folder = "emu-empty" } }
+        rows[#rows + 1] = ctx.Entry.folder{ title = "Folder that fails once", subtitle = "Retry works",
+            locator = { folder = "emu-broken" } }
+    end
+    return rows, more
+end
+demo.shelves = { { key = "courses", title = "Courses" } }
+demo.browse = function(_key, limit, ctx, page) return demo_list(nil, limit, page, ctx) end
+check("demo registers", Catalog.register(demo) == true, table.concat(Catalog.ids(), ","))
+set_builtins(false)
+
+-- 1. home: Browse chip + the Courses shelf of folder tiles
+at(1, function() home():rebuild() end, "home rebuild (shelf fetch)")
+at(3, function()
+    local roots = Settings.browseRoots()
+    check("one Browse chip", #roots == 1 and roots[1].title == "Demo courses", #roots)
+    shot("home-browse-chip-and-folder-shelf")
+end, "home")
+-- 2. the chip opens the root (its own on_tap)
+at(1, function()
+    local rows = home():browseRows()
+    rows[2].hits[1].on_tap()
+end, "tap Browse chip")
+at(2, function()
+    local v = top()
+    check("root view", v.title == "Demo courses" and v.folder == nil and v.parent == nil, v.title)
+    dump("root")
+    shot("root-list")
+end, "root")
+at(1, function() top():toggleView() end, "grid")
+at(2, function() shot("root-grid") end, "root grid")
+at(1, function() top():toggleView() end, "list again")
+-- 3. two nested levels
+at(1, function() top():openEntry(row_named("Literature 101")) end, "open Literature 101")
+at(2, function() dump("level 1"); shot("lit101-list") end, "level 1")
+at(1, function() top():openEntry(row_named("Week 1")) end, "open Week 1")
+at(2, function()
+    local v = top()
+    check("level 2 chain", titles(Folders.ancestors(v)) == "Demo courses > Literature 101", titles(Folders.ancestors(v)))
+    dump("level 2")
+    shot("week1-list")
+end, "level 2")
+at(1, function() top():toggleView() end, "grid")
+at(2, function() shot("week1-grid") end, "level 2 grid")
+at(1, function() top():toggleView() end, "list again")
+-- 4. Back = up one level, one full refresh
+at(1, function()
+    local before, views = full_ui, #App.views
+    top().title_bar.left_icon_tap_callback()
+    check("Back closes one level with one full refresh",
+        #App.views == views - 1 and full_ui - before == 1 and top().title == "Literature 101",
+        ("views %d->%d refreshes +%d top %s"):format(views, #App.views, full_ui - before, top().title))
+end, "Back")
+at(1, function() shot("back-to-lit101") end, "after Back")
+-- 5. the title menu: ancestors, nearest last; picking the root closes the two above it
+at(1, function() top():openEntry(row_named("Week 1")) end, "open Week 1 again")
+at(2, function() top():onTitleTap() end, "title tap")
+at(1, function()
+    shot("title-menu")
+    local dialog = menu()
+    local first = dialog and dialog.buttons[1] and dialog.buttons[1][1]
+    local second = dialog and dialog.buttons[2] and dialog.buttons[2][1]
+    check("menu: the root first, the nearest last",
+        #dialog.buttons == 2 and first.text:find("Demo courses", 1, true) ~= nil
+            and second.text:find("Literature 101", 1, true) ~= nil,
+        first and first.text)
+    local before, views = full_ui, #App.views
+    first.callback()
+    check("jump to the root", top().title == "Demo courses" and #App.views == views - 2,
+        ("views %d->%d top %s refreshes +%d"):format(views, #App.views, top().title, full_ui - before))
+end, "pick the root")
+at(1, function() shot("jumped-to-root") end, "after jump")
+at(1, function() top():onTitleTap() end, "title tap on the root")
+at(1, function()
+    check("the root's title tap opens nothing", menu() == nil)
+end, "root menu")
+-- 6. the empty folder and the failing one (Retry)
+at(1, function() top():openEntry(row_named("Empty folder")) end, "open Empty folder")
+at(2, function()
+    check("empty folder", #top().entries == 0 and top().pager:loaded(), top():statusLine())
+    shot("empty-folder")
+    top():close()
+end, "empty")
+at(1, function() top():openEntry(row_named("Folder that fails once")) end, "open failing folder")
+at(2, function()
+    check("first listing failed", top().pager.err ~= nil and not top().pager:loaded(), top().pager.err)
+    check("the provider's reason is shown under the message, then Retry", #top():emptyRows() == 3,
+        #top():emptyRows())
+    shot("failing-folder-retry")
+    local retry
+    for __, hit in ipairs(top().hits) do
+        if hit.w == Screen:scaleBySize(120) then retry = hit end   -- the Retry button
+    end
+    tap(top(), retry)
+end, "tap Retry")
+at(2, function()
+    check("Retry lists it", #top().entries == 1 and top().pager.err == nil, top():statusLine())
+    shot("failing-folder-after-retry")
+    top():close()
+end, "after Retry")
+at(1, function() top():close() end, "close the root")
+-- 7. folder guards
+at(1, function()
+    local folder = Browse.get("folders_demo:courses")[1]
+    local ok, why = Downloader.enqueue(folder)
+    check("downloader refuses a folder", ok == false and Downloader.state(folder) == nil, why)
+    local views = #App.views
+    App.holdDownload(folder, home())
+    check("hold on a folder does nothing (yet)", #App.views == views, #App.views)
+    check("no status for folder rows", App.bookStatus(folder).record == nil and not App.bookStatus(folder).downloaded)
+    require("view_detail").show(folder)
+    check("no detail page for a folder", #App.views == views, #App.views)
+end, "guards")
+-- 8. a folder row in search results
+at(1, function() home():startSearch("gothic") end, "search")
+at(3, function()
+    local h = home()
+    for i, e in ipairs(h.entries) do log(("RESULT %02d | %-8s | %s"):format(i, e.action, e.title)) end
+    shot("search-folder-row")
+    local row_hit
+    for __, hit in ipairs(h.hits) do
+        if hit.w == h.screen_w then row_hit = hit; break end   -- the first result row
+    end
+    tap(h, row_hit)
+end, "tap the Gothic folder in the results")
+at(2, function()
+    local v = top()
+    check("search opens a folder view with no ancestors", v.title == "Gothic" and #Folders.ancestors(v) == 0, v.title)
+    shot("gothic-from-search")
+    v:close()
+end, "Gothic")
+at(1, function() home():toggleView() end, "results grid")
+at(2, function() shot("search-folder-grid"); home():toggleView(); home():goHome() end, "home again")
+-- 9. a folder tile on the shelf
+at(2, function()
+    shot("home-folder-shelf")
+    local tiles = {}
+    for __, hit in ipairs(home().hits) do
+        if hit.w == Shelf.geometry(home()).cover_w then tiles[#tiles + 1] = hit end
+    end
+    tap(home(), tiles[2])   -- Literature 201
+end, "tap a shelf tile")
+at(2, function()
+    check("shelf tile opens its folder", top().title == "Literature 201" and #Folders.ancestors(top()) == 0, top().title)
+    dump("from shelf")
+    shot("lit201-from-shelf")
+    top():close()
+end, "shelf folder")
+at(1, function() set_builtins(true); log("done"); os.exit(0) end, "exit")
+run(1)

@@ -82,18 +82,7 @@ end
 --- Page `page` (>= 2) of a shelf for "See all", in a job under the usual
 -- deadline. Not cached. Returns the job handle (cancel it on close).
 function Browse.fetchPage(kind, page, on_done, on_error)
-    return Jobs.run{
-        timeout = Jobs.DEADLINE,
-        task = page_task(kind, Browse.PAGE_SIZE, page),
-        on_done = function(res)
-            if type(res) ~= "table" or type(res.entries) ~= "table" then
-                on_error("browse failed")
-                return
-            end
-            on_done(res.entries, res.has_more == true)
-        end,
-        on_error = function(err) on_error(err) end,
-    }
+    return Jobs.runPage(page_task(kind, Browse.PAGE_SIZE, page), on_done, on_error)
 end
 
 return Browse

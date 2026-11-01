@@ -20,6 +20,7 @@ local Size = require("ui/size")
 local Screen = require("device").screen
 local _ = require("gettext")
 local T = require("ffi/util").template
+local logger = require("logger")
 
 local App = require("app")
 local Covers = require("covers")
@@ -34,6 +35,16 @@ local DetailView = ViewBase:extend{
     on_change = nil,   -- called when the book's state changed (downloaded)
     self_paged = true,
 }
+
+--- Open the detail page over the top screen. Folder rows never get one
+--- (App.openEntry opens their folder view): refused here too.
+function DetailView.show(entry, on_change)
+    if entry.action == Entry.ACTION.FOLDER then
+        logger.warn("OpenShelf: no detail page for a folder row", entry.title)
+        return
+    end
+    UIManager:show(DetailView:new{ entry = entry, on_change = on_change })
+end
 
 function DetailView:setup()
     App.push(self)

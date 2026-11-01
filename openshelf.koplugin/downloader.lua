@@ -213,6 +213,10 @@ end
 -- Queue API
 ---------------------------------------------------------------------------
 function Downloader.enqueue(entry)
+    if entry.action == Entry.ACTION.FOLDER then
+        logger.warn("OpenShelf: refusing to download a folder row", entry.title)
+        return false, "folder rows are never downloaded"
+    end
     if entry.action == Entry.ACTION.BUY then
         -- Decision 49: a buy row's locator is a web page; the detail view
         -- shows it as text + QR. It is never resolved, never downloaded.

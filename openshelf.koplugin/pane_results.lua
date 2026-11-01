@@ -4,12 +4,15 @@ Rows for a page of book entries, as a list or a 3-column grid
 lists. Pure layout: the caller supplies status lookups and tap/hold handlers.
 Entries are grouped by action (Catalog.group); a group header row appears
 only when more than one action is present, and paging keeps a header with
-the row that follows it.
+the row that follows it. Folder rows (DESIGN.md §12.5) draw a folder tile
+when they have no cover, a second line from subtitle / path and a
+`Source · N files · size` meta, never a ✓.
 
   local rows, total_pages, page_entries = Pane.rows(view, entries, {
       mode = "list"|"grid", page = n, avail_h = px,
       status = function(entry) -> { downloaded, missing, dl } end,
       on_tap = function(entry) end, on_hold = function(entry) end,
+      in_folder = true,   -- inside a folder view: no path on folder rows
   })
   local p = Pane.pageOf(view, entries, { mode =, avail_h = }, entry)   -- page holding entry
 --]]
@@ -18,7 +21,11 @@ local VerticalGroup = require("ui/widget/verticalgroup")
 local Size = require("ui/size")
 local Screen = require("device").screen
 local _ = require("gettext")
+local N_ = _.ngettext
+local T = require("ffi/util").template
 local Catalog = require("catalog")
+local Entry = require("entry")
+local Folders = require("openshelf_folders")
 local Glyphs = require("glyphs")
 local Layout = require("layout")
 local P = require("uiparts")
@@ -70,10 +77,19 @@ function Pane.perPage(view, mode, avail_h)
     return math.max(1, math.floor(avail_h / Pane.listGeometry(view).row_h))
 end
 
+local function is_folder(entry) return entry.action == Entry.ACTION.FOLDER end
+
+local FOLDER_WORDS = {
+    files = function(n) return T(N_("1 file", "%1 files", n), n) end,
+    size = function(bytes) return P.friendlySize(bytes) end,
+    folder = _("Folder"),
+}
+
 local function meta_line(entry, st)
     -- Source badge: the registry's current display name for the row's provider
     -- id; a stored row from a provider no longer installed keeps its own label.
     local label = Catalog.nameOf(entry.provider) or entry.source or ""
+    if is_folder(entry) then return Folders.metaLine(entry, label, FOLDER_WORDS) end
     local meta = string.format("%s · %s", label, (entry.format or "epub"):upper())
     if entry.price then meta = meta .. " · " .. entry.price end   -- buy rows
     if st.dl and st.dl.status == "queued" then
@@ -98,13 +114,14 @@ local function dl_progress(st)
     return pct, label
 end
 
-function Pane.listRow(view, entry, g, st, on_tap, on_hold)
-    local cover = P.cover(entry.cover_url, g.cover_w, g.cover_h, {
-        letter = P.letterFor(entry), dim = st.missing,
+function Pane.listRow(view, entry, g, st, on_tap, on_hold, in_folder)
+    local cover = P.entryCover(entry, g.cover_w, g.cover_h, {
+        dim = st.missing,
         badge = (st.downloaded and not st.missing) and Glyphs.check or nil,
     })
     local title = P.text(entry.title, 17, { bold = true, max_width = g.text_w })
-    local author = P.text(entry.author, 15, { max_width = g.text_w })
+    local second = P.text(is_folder(entry) and Folders.secondLine(entry, in_folder) or entry.author, 15,
+        { max_width = g.text_w })
     local meta
     if st.dl and st.dl.status == "active" then
         local pct, label = dl_progress(st)
@@ -120,7 +137,7 @@ function Pane.listRow(view, entry, g, st, on_tap, on_hold)
     local textcol = VerticalGroup:new{
         align = "left",
         title, P.vspace(Screen:scaleBySize(2)),
-        author, P.vspace(Screen:scaleBySize(3)),
+        second, P.vspace(Screen:scaleBySize(3)),
         meta,
     }
     local content = HorizontalGroup:new{ align = "center", cover, P.hspace(g.pad), textcol }
@@ -131,13 +148,11 @@ function Pane.listRow(view, entry, g, st, on_tap, on_hold)
     }
 end
 
-local function grid_cell(entry, g, st)
+local function grid_cell(entry, g, st, in_folder)
     local caption_w = g.cover_w
     local badge
     if st.downloaded and not st.missing then badge = Glyphs.check end
-    local cover = P.cover(entry.cover_url, g.cover_w, g.cover_h, {
-        letter = P.letterFor(entry), dim = st.missing, badge = badge,
-    })
+    local cover = P.entryCover(entry, g.cover_w, g.cover_h, { dim = st.missing, badge = badge })
     local second
     if st.dl and st.dl.status == "active" then
         local pct, label = dl_progress(st)
@@ -149,6 +164,7 @@ local function grid_cell(entry, g, st)
         }
     else
         local sub = entry.author or ""
+        if is_folder(entry) then sub = Folders.secondLine(entry, in_folder) end
         if st.dl and st.dl.status == "queued" then sub = _("Queued") end
         if st.missing then sub = _("not on device") end
         second = P.text(sub, 12, { color = P.DARK_GRAY, max_width = caption_w })
@@ -163,12 +179,12 @@ local function grid_cell(entry, g, st)
     return P.box(g.cell_w, g.cell_h, cell, "center")
 end
 
-function Pane.gridRow(view, entries, g, status, on_tap, on_hold)
+function Pane.gridRow(view, entries, g, status, on_tap, on_hold, in_folder)
     local cells = {}
     local hits = {}
     local left = math.floor((view.screen_w - g.cols * g.cell_w) / 2)
     for i, entry in ipairs(entries) do
-        cells[#cells + 1] = grid_cell(entry, g, status(entry))
+        cells[#cells + 1] = grid_cell(entry, g, status(entry), in_folder)
         hits[#hits + 1] = {
             x = left + (i - 1) * g.cell_w, w = g.cell_w,
             on_tap = function() on_tap(entry) end,
@@ -252,13 +268,15 @@ function Pane.rows(view, entries, opts)
             rows[#rows + 1] = header_row(view, line.header)
         elseif line.cells then
             for __, e in ipairs(line.cells) do page_entries[#page_entries + 1] = e end
-            rows[#rows + 1] = Pane.gridRow(view, line.cells, g, opts.status, opts.on_tap, opts.on_hold)
+            rows[#rows + 1] = Pane.gridRow(view, line.cells, g, opts.status, opts.on_tap, opts.on_hold,
+                opts.in_folder)
         else
             local entry = line.entry
             page_entries[#page_entries + 1] = entry
             rows[#rows + 1] = Pane.listRow(view, entry, g, opts.status(entry),
                 function() opts.on_tap(entry) end,
-                function() opts.on_hold(entry) end)
+                function() opts.on_hold(entry) end,
+                opts.in_folder)
         end
     end
     return rows, total, page_entries

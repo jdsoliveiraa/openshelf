@@ -4,6 +4,7 @@ Pure Lua, no KOReader: the list view owns one, browse.lua stores page 1 in
 the cache through pack/unpack.
 
   local pager = ShelfPager.new{ entries = page1, has_more = true }
+  local pager = ShelfPager.new{ page = 0, has_more = true }   -- nothing loaded yet (folder view)
   if pager:canLoadMore() then
       local page = pager:begin()           -- 2; nil when not allowed
       … fetch page …
@@ -12,7 +13,9 @@ the cache through pack/unpack.
   end
 
 The host asks for page N+1 only after page N said has_more == true, and
-never while a fetch is running.
+never while a fetch is running. A pager made with `page = 0` has loaded
+nothing yet: its first begin() returns 1 (a folder view fetches page 1
+itself; See all is seeded with the cached page 1).
 
 Cache value (openshelf_browse.json): { entries = {…}, has_more = bool,
 size = browse page size it was fetched at }. unpack(value, size) flags a
@@ -29,7 +32,7 @@ function ShelfPager.new(opts)
     local self = setmetatable({}, ShelfPager)
     self.entries = {}
     self.seen = {}
-    self.page = 1
+    self.page = opts and opts.page or 1
     self.has_more = opts and opts.has_more == true or false
     self.loading = false
     self.err = nil
@@ -43,6 +46,12 @@ function ShelfPager:_add(e)
     if id then self.seen[id] = true end
     self.entries[#self.entries + 1] = e
     return true
+end
+
+--- Whether any page has arrived (false for a folder view's pager until its
+--- page 1 does).
+function ShelfPager:loaded()
+    return self.page > 0
 end
 
 function ShelfPager:canLoadMore()

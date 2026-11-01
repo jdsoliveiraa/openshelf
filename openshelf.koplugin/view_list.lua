@@ -1,12 +1,18 @@
 --[[
 A full-screen list/grid of entries with paging: "See all" for a browse shelf
-or a My books section. Tap → detail, hold → download (or, with
-allow_remove, "Remove from My books").
+or a My books section. Tap → App.openEntry (detail, or a folder view for a
+folder row), hold → download (or, with allow_remove, "Remove from My
+books").
 
 A browse shelf passes `shelf_id` and page 1's `has_more` (ticket #12): the
 last page then ends in "Load more", which fetches the shelf's next page in a
 job (Jobs.DEADLINE) and appends it, like search results. A failure shows in
 the toolbar (tap for the reason) and leaves Load more in place to retry.
+
+view_folder.lua builds the folder view on this list: it extends setup
+(page 1 is fetched by the view) and overrides fetchPage (its pages come from
+Catalog.list), countText, failedText, statusDetail, emptyRows and
+openEntry, adds onTitleTap, and sets in_folder.
 --]]
 local HorizontalGroup = require("ui/widget/horizontalgroup")
 local InfoMessage = require("ui/widget/infomessage")
@@ -36,6 +42,7 @@ local ListView = ViewBase:extend{
     on_change = nil,
     shelf_id = nil,     -- browse shelf id: enables Load more
     has_more = false,   -- page 1's has_more (from the browse cache)
+    in_folder = false,  -- a folder view: folder rows show no path
     self_paged = true,
 }
 
@@ -87,21 +94,40 @@ function ListView:geometry()
     return tb_h, footer_h, self.content_h - tb_h - footer_h
 end
 
+function ListView:countText()
+    return T(_("%1 books"), #self.entries)
+end
+
+function ListView:failedText()
+    return Glyphs.warning .. " " .. _("Load more failed")
+end
+
 function ListView:statusLine()
-    local parts = { T(_("%1 books"), #self.entries) }
+    local parts = { self:countText() }
     if self.pager and self.pager.loading then
-        parts[#parts + 1] = _("Loading more…")
+        parts[#parts + 1] = self.pager:loaded() and _("Loading more…") or _("Loading…")
     elseif self.pager and self.pager.err then
-        parts[#parts + 1] = Glyphs.warning .. " " .. _("Load more failed")
+        parts[#parts + 1] = self:failedText()
     end
     return table.concat(parts, "  ·  ")
 end
 
+function ListView:statusDetail(err)
+    return T(_("Could not load more books:\n%1\n\nTap Load more to try again."), err)
+end
+
 function ListView:showStatusDetail()
     if not (self.pager and self.pager.err) then return end
-    UIManager:show(InfoMessage:new{
-        text = T(_("Could not load more books:\n%1\n\nTap Load more to try again."), self.pager.err),
-    })
+    UIManager:show(InfoMessage:new{ text = self:statusDetail(self.pager.err) })
+end
+
+-- What the pane shows when there are no rows.
+function ListView:emptyRows()
+    local h = Screen:scaleBySize(60)
+    return { {
+        widget = P.row(self.screen_w, h, P.text(_("Nothing here yet."), 15, { color = P.DARK_GRAY })),
+        h = h, hits = {},
+    } }
 end
 
 function ListView:buildRows()
@@ -128,8 +154,9 @@ function ListView:buildRows()
     local prows, total, page_entries = Pane.rows(self, self.entries, {
         mode = self.view_mode, page = self.page, avail_h = avail_h,
         status = function(e) return App.bookStatus(e) end,
-        on_tap = function(e) self:openDetail(e) end,
+        on_tap = function(e) self:openEntry(e) end,
         on_hold = function(e) self:hold(e) end,
+        in_folder = self.in_folder,
     })
     self.total_pages = total
     if self.page > total then self.page = total end
@@ -137,18 +164,15 @@ function ListView:buildRows()
     for __, r in ipairs(prows) do rows[#rows + 1] = r end
 
     if #self.entries == 0 then
-        local h = Screen:scaleBySize(60)
-        rows[#rows + 1] = {
-            widget = P.row(w, h, P.text(_("Nothing here yet."), 15, { color = P.DARK_GRAY })),
-            h = h, hits = {},
-        }
+        for __, r in ipairs(self:emptyRows()) do rows[#rows + 1] = r end
     end
 
-    -- footer: page label, "Load more" on the last page while the shelf has more
+    -- footer: page label, "Load more" on the last page while the list has
+    -- more (a folder's first page is fetched by the view, not the button)
     local label = total > 1 and T(_("Page %1 of %2"), self.page, total) or ""
     local items = { P.text(label, 13, { color = P.DARK_GRAY }) }
     local hits = {}
-    if self.pager and self.pager.has_more and self.page == total then
+    if self.pager and self.pager.has_more and self.pager:loaded() and self.page == total then
         local bw, bh = Screen:scaleBySize(120), Screen:scaleBySize(32)
         local lw = items[1]:getSize().w
         items[#items + 1] = P.hspace(math.max(0, w - 2 * pad - lw - bw))
@@ -166,9 +190,13 @@ function ListView:buildRows()
     return rows
 end
 
---- Fetch the shelf's next page and append it. Lands on the page holding the
---- first new book: the same page when the last one had room (refreshed in
---- place, "ui"), else the next one (a page turn, "partial").
+--- One page in a job: on_done(entries, has_more) / on_error(err). Returns
+--- the job handle.
+function ListView:fetchPage(page, on_done, on_error)
+    return Browse.fetchPage(self.shelf_id, page, on_done, on_error)
+end
+
+--- Fetch the next page and append it.
 function ListView:loadMore()
     if not (self.pager and self.pager:canLoadMore()) then return end
     NetworkMgr:runWhenOnline(function()
@@ -176,28 +204,35 @@ function ListView:loadMore()
         local page = self.pager:begin()
         if not page then return end
         self:rebuild()
-        self.more_job = Browse.fetchPage(self.shelf_id, page, function(entries, has_more)
-            self.more_job = nil
-            if self.closed then return end
-            local n_old = #self.entries
-            local added = self.pager:append(entries, has_more)
-            local refresh = "ui"
-            if added > 0 then
-                local __, ___, avail_h = self:geometry()
-                local target = Pane.pageOf(self, self.entries,
-                    { mode = self.view_mode, avail_h = avail_h }, self.entries[n_old + 1])
-                if target and target ~= self.page then
-                    self.page = target
-                    refresh = "partial"
-                end
+        self:fetch(page)
+    end)
+end
+
+--- Fetch `page` (pager:begin() returned it) and append it. Lands on the page
+--- holding the first new book: the same page when the last one had room
+--- (refreshed in place, "ui"), else the next one (a page turn, "partial").
+function ListView:fetch(page)
+    self.more_job = self:fetchPage(page, function(entries, has_more)
+        self.more_job = nil
+        if self.closed then return end
+        local n_old = #self.entries
+        local added = self.pager:append(entries, has_more)
+        local refresh = "ui"
+        if added > 0 then
+            local __, ___, avail_h = self:geometry()
+            local target = Pane.pageOf(self, self.entries,
+                { mode = self.view_mode, avail_h = avail_h }, self.entries[n_old + 1])
+            if target and target ~= self.page then
+                self.page = target
+                refresh = "partial"
             end
-            self:rebuild(refresh)
-        end, function(err)
-            self.more_job = nil
-            if self.closed then return end
-            self.pager:fail(err)
-            self:rebuild()
-        end)
+        end
+        self:rebuild(refresh)
+    end, function(err)
+        self.more_job = nil
+        if self.closed then return end
+        self.pager:fail(err)
+        self:rebuild()
     end)
 end
 
@@ -207,9 +242,13 @@ function ListView:toggleView()
     self:rebuild("partial")
 end
 
+--- Tap on a row: a folder opens its folder view, anything else detail.
+function ListView:openEntry(entry)
+    App.openEntry(entry, self)
+end
+
 function ListView:openDetail(entry)
-    local DetailView = require("view_detail")
-    UIManager:show(DetailView:new{ entry = entry, on_change = function() self:refresh() end })
+    require("view_detail").show(entry, function() self:refresh() end)
 end
 
 function ListView:refresh()

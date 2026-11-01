@@ -4,7 +4,8 @@ The home screen (DESIGN.md §2.2) and, in the same widget, the results screen
 tap away and "back" returns to the shelves.
 
 Modes:
-  "home"    — search row, recent searches, My books shelf, browse shelves
+  "home"    — search row, recent searches, My books shelf, Browse chips
+              (folder roots, §12.3), browse shelves
   "results" — toolbar strip (status · filter · list/grid), rows, load more
 --]]
 local ConfirmBox = require("ui/widget/confirmbox")
@@ -145,36 +146,36 @@ function HomeView:searchRow()
     }
 end
 
-function HomeView:recentRows()
+-- Two chips per row under a section heading: chips = { { label, on_tap,
+-- on_hold } }, each drawn with `glyph` before its label.
+function HomeView:chipRows(title, glyph, chips)
     local rows = {}
-    local recents = Settings.recents()
-    if #recents == 0 then return rows end
+    if #chips == 0 then return rows end
     local w, pad = self.screen_w, Size.padding.default
-    rows[#rows + 1] = self:sectionRow(_("Recent searches"))
+    rows[#rows + 1] = self:sectionRow(title)
     local chip_h = Screen:scaleBySize(34)
     local gap = Screen:scaleBySize(8)
     local chip_w = math.floor((w - 2 * pad - gap) / 2)
     local tb = Size.border.thin
-    local hglyph_w = P.textWidth(Glyphs.history, 13)
-    for r = 1, math.ceil(#recents / 2) do
+    local glyph_w = P.textWidth(glyph, 13)
+    for r = 1, math.ceil(#chips / 2) do
         local cells, hits = {}, {}
         for c = 1, 2 do
-            local q = recents[(r - 1) * 2 + c]
-            if q then
+            local chip = chips[(r - 1) * 2 + c]
+            if chip then
                 cells[#cells + 1] = FrameContainer:new{
                     bordersize = tb, color = P.GRAY, radius = Screen:scaleBySize(6),
                     padding = 0, margin = 0, background = P.WHITE,
                     P.box(chip_w - 2 * tb, chip_h - 2 * tb, HorizontalGroup:new{
                         align = "center",
-                        P.hspace(pad), P.text(Glyphs.history, 13, { color = P.DARK_GRAY }), P.hspace(pad),
-                        P.text(q, 14, { max_width = chip_w - 2 * tb - 3 * pad - hglyph_w }),
+                        P.hspace(pad), P.text(glyph, 13, { color = P.DARK_GRAY }), P.hspace(pad),
+                        P.text(chip.label, 14, { max_width = chip_w - 2 * tb - 3 * pad - glyph_w }),
                     }),
                 }
                 if c == 1 then cells[#cells + 1] = P.hspace(gap) end
                 hits[#hits + 1] = {
                     x = pad + (c - 1) * (chip_w + gap), w = chip_w,
-                    on_tap = function() self:runSearch(q) end,
-                    on_hold = function() self:confirmRemoveRecent(q) end,
+                    on_tap = chip.on_tap, on_hold = chip.on_hold,
                 }
             end
         end
@@ -185,6 +186,32 @@ function HomeView:recentRows()
         }
     end
     return rows
+end
+
+function HomeView:recentRows()
+    local chips = {}
+    for i, q in ipairs(Settings.recents()) do
+        chips[i] = {
+            label = q,
+            on_tap = function() self:runSearch(q) end,
+            on_hold = function() self:confirmRemoveRecent(q) end,
+        }
+    end
+    return self:chipRows(_("Recent searches"), Glyphs.history, chips)
+end
+
+-- Browse (DESIGN.md §12.3, decision 71): one chip per enabled, set-up
+-- source with a root, labelled with the root title, in source order. Shown
+-- offline too; opening one asks for Wi-Fi.
+function HomeView:browseRows()
+    local chips = {}
+    for i, r in ipairs(Settings.browseRoots()) do
+        chips[i] = {
+            label = r.title,
+            on_tap = function() App.openFolder{ provider_id = r.provider.id, title = r.title } end,
+        }
+    end
+    return self:chipRows(_("Browse"), Glyphs.folder, chips)
 end
 
 function HomeView:homeRows()
@@ -211,10 +238,12 @@ function HomeView:homeRows()
         add_shelf(Shelf.rows(self, {
             title = _("My books"), entries = entries,
             on_see_all = function() self:openMyBooks() end,
-            on_tap = function(e) self:openDetail(e) end,
+            on_tap = function(e) App.openEntry(e, self) end,
             status = function(e) return App.bookStatus(e) end,
         }), entries)
     end
+
+    for __, r in ipairs(self:browseRows()) do rows[#rows + 1] = r end
 
     -- Browse shelves of enabled, set-up sources with "Shelves on home" on, in
     -- source order (Settings.homeShelves; cached under "<provider id>:<key>",
@@ -232,7 +261,7 @@ function HomeView:homeRows()
             add_shelf(Shelf.rows(self, {
                 title = shelf.title, entries = entries, mark_downloaded = true,
                 on_see_all = function() self:openList(shelf.title, entries, shelf.id, has_more) end,
-                on_tap = function(e) self:openDetail(e) end,
+                on_tap = function(e) App.openEntry(e, self) end,
                 on_hold = function(e) App.holdDownload(e, self) end,
                 status = function(e) return App.bookStatus(e) end,
             }), entries)
@@ -354,7 +383,7 @@ function HomeView:resultsRows()
     local prows, total, page_entries = Pane.rows(self, self.entries, {
         mode = self.view_mode, page = self.page, avail_h = avail,
         status = function(e) return App.bookStatus(e) end,
-        on_tap = function(e) self:openDetail(e) end,
+        on_tap = function(e) App.openEntry(e, self) end,
         on_hold = function(e) App.holdDownload(e, self) end,
     })
     self.total_pages = total
@@ -515,8 +544,7 @@ end
 -- Navigation to other screens
 ---------------------------------------------------------------------------
 function HomeView:openDetail(entry)
-    local DetailView = require("view_detail")
-    UIManager:show(DetailView:new{ entry = entry, on_change = function() self:rebuild() end })
+    require("view_detail").show(entry, function() self:rebuild() end)
 end
 
 function HomeView:openMyBooks()
