@@ -5,6 +5,8 @@ real Project Gutenberg EPUBs, so downloads work on the device and in the
 emulator.
 
   Demo courses                       (the root: a Browse chip on home)
+  ├── Archive                        (only with "Show the archive" on)
+  │   └── Literature 100             Alice's Adventures in Wonderland
   ├── Literature 101
   │   ├── Week 1                     Pride and Prejudice, Emma
   │   └── Week 2                     Frankenstein
@@ -23,7 +25,9 @@ What it shows:
 - `search` and `search_in` return folders and files with `path` filled, so a
   file lands in the same directory wherever it was found; `list` rows leave
   `path` out, and the host places them under the folder that listed them;
-- `dedupe = false`: the two Pride and Prejudice editions stay two rows.
+- `dedupe = false`: the two Pride and Prejudice editions stay two rows;
+- a setting that changes the tree ("Show the archive", like UCStudent's
+  "All years"): changing it clears the folders the host cached for you.
 
 Install: copy this file into <KOReader settings>/openshelf/providers/
 (on a Kobo: /mnt/onboard/.adds/koreader/settings/openshelf/providers/) and
@@ -41,6 +45,10 @@ local P = {
     root   = "Demo courses",
     dedupe = false,               -- same-named files in different folders stay apart
     enabled_by_default = true,
+    settings = {
+        { key = "archive", title = "Show the archive", type = "toggle", default = false,
+          hint = "Past years' courses, as an Archive folder" },
+    },
 }
 
 -- The catalog. `gutenberg` is the book id; `size` is the EPUB's size in
@@ -74,6 +82,16 @@ local TREE = {
       year = "1920", gutenberg = 37134, size = 73000 },
 }
 
+-- Listed first under the root while "Show the archive" is on.
+local ARCHIVE = { folder = "archive", title = "Archive", items = {
+    { folder = "lit100", title = "Literature 100", items = {
+        { file = "lit100-alice", title = "Alice's Adventures in Wonderland", author = "Lewis Carroll",
+          year = "1865", gutenberg = 11, size = 185000 },
+    } },
+} }
+local WITH_ARCHIVE = { ARCHIVE }
+for __, node in ipairs(TREE) do WITH_ARCHIVE[#WITH_ARCHIVE + 1] = node end
+
 -- A new path: `path` plus one more folder title.
 local function below(path, title)
     local out = {}
@@ -91,9 +109,9 @@ local function walk(items, path, visit)
     end
 end
 
--- Lookups by locator, built once from the constant tree above.
+-- Lookups by locator, built once from the constant trees above.
 local FOLDERS, FILES = {}, {}
-walk(TREE, {}, function(node, path)
+walk(WITH_ARCHIVE, {}, function(node, path)
     if node.items then FOLDERS[node.folder] = { node = node, path = path }
     else FILES[node.file] = node end
 end)
@@ -134,9 +152,14 @@ local function page_of(all, limit, page)
     return slice, #all > first + limit - 1
 end
 
+-- The top level: the archive joins it while the setting is on.
+local function top(ctx)
+    return ctx.settings.archive and WITH_ARCHIVE or TREE
+end
+
 -- The items of a folder locator (nil = the root) and the titles above them.
-local function folder_items(locator)
-    if locator == nil then return TREE, {} end
+local function folder_items(locator, ctx)
+    if locator == nil then return top(ctx), {} end
     local hit = type(locator) == "table" and FOLDERS[locator.folder]
     if not hit then return nil end
     return hit.node.items, below(hit.path, hit.node.title)
@@ -153,11 +176,11 @@ local function find(items, path, query, limit, page, ctx)
 end
 
 function P.search(query, limit, page, ctx)
-    return find(TREE, {}, query, limit, page, ctx)
+    return find(top(ctx), {}, query, limit, page, ctx)
 end
 
 function P.list(locator, limit, page, ctx)
-    local items = folder_items(locator)
+    local items = folder_items(locator, ctx)
     if not items then return nil, "this folder is gone" end
     local nodes, more = page_of(items, limit, page)
     local rows = {}
@@ -167,7 +190,7 @@ function P.list(locator, limit, page, ctx)
 end
 
 function P.search_in(locator, query, limit, page, ctx)
-    local items, path = folder_items(locator)
+    local items, path = folder_items(locator, ctx)
     if not items then return nil, "this folder is gone" end
     return find(items, path, query, limit, page, ctx)
 end

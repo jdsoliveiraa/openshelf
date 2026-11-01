@@ -6,7 +6,12 @@
 -- two nested levels (list and grid) -> Back -> the ancestor jump from the
 -- title menu -> a folder row in search results -> a folder tile on a shelf
 -- -> the empty folder -> the failing folder and Retry, and the folder guards
--- (downloader refuses, hold does nothing). Logs CHECK lines (PASS/FAIL).
+-- (downloader refuses, hold does nothing). Then the offline cache (#18,
+-- §12.6): the folders opened above, aged 3 days, open with Wi-Fi faked off
+-- ("Updated 3 d ago", nothing asked), a folder never opened asks for Wi-Fi,
+-- Refresh online repaints, a stale copy refreshes by itself while online, a
+-- failed refresh keeps the cached rows with the error in the toolbar, and
+-- changing the demo's setting clears its folders. Logs CHECK lines (PASS/FAIL).
 -- Run: KOREADER_SRC=… scripts/emu.sh --walk tools/emu-folders-check.lua --shots <dir>. Dev only.
 local UIManager = require("ui/uimanager")
 local Screen = require("device").screen
@@ -17,6 +22,7 @@ local Downloader = require("downloader")
 local Folders = require("openshelf_folders")
 local Settings = require("settings")
 local Shelf = require("widget_shelf")
+local NetworkMgr = require("ui/network/manager")
 local OUT = os.getenv("OPENSHELF_SHOT_DIR")
 local REPO = (debug.getinfo(1, "S").source:match("^@(.*/)tools/") or "./")
 local step = 0
@@ -98,7 +104,11 @@ end
 local demo = dofile(REPO .. "examples/folders_demo.lua")
 local demo_list = demo.list
 local broken_calls = 0
+local down = false   -- every list fails (a failed refresh)
+local list_calls = 0
 demo.list = function(loc, limit, page, ctx)
+    list_calls = list_calls + 1
+    if down then return nil, "the server is down (emu check)" end
     if loc and loc.folder == "emu-empty" then return {}, false end
     if loc and loc.folder == "emu-broken" then
         broken_calls = broken_calls + 1
@@ -118,6 +128,38 @@ demo.shelves = { { key = "courses", title = "Courses" } }
 demo.browse = function(_key, limit, ctx, page) return demo_list(nil, limit, page, ctx) end
 check("demo registers", Catalog.register(demo) == true, table.concat(Catalog.ids(), ","))
 set_builtins(false)
+Settings.setProviderSetting("folders_demo", "archive", nil)
+Folders.cache():clearProvider("folders_demo")   -- every run starts with nothing cached
+
+-- Wi-Fi faked off: NetworkMgr says so, and asking to turn it on is counted
+-- (the callback never runs, as when the user says no).
+local real_net = { isConnected = NetworkMgr.isConnected, isOnline = NetworkMgr.isOnline,
+    beforeWifiAction = NetworkMgr.beforeWifiAction }
+local wifi_asks = 0
+local function wifi(on)
+    if on then
+        for k, f in pairs(real_net) do NetworkMgr[k] = f end
+        return
+    end
+    NetworkMgr.isConnected = function() return false end
+    NetworkMgr.isOnline = function() return false end
+    NetworkMgr.beforeWifiAction = function() wifi_asks = wifi_asks + 1 end
+end
+-- Age every cached page of the demo by `days`.
+local function age_cache(days)
+    for k, f in pairs(Folders.cache().data) do
+        if k:find("^folders_demo|") then
+            for __, p in ipairs(f.pages) do p.at = p.at - days * 86400 end
+        end
+    end
+end
+local function open_chip() home():browseRows()[2].hits[1].on_tap() end
+local function menu_button(label)
+    local dialog = menu()
+    for __, row in ipairs(dialog and dialog.buttons or {}) do
+        if row[1].text:find(label, 1, true) then return row[1] end
+    end
+end
 
 -- 1. home: Browse chip + the Courses shelf of folder tiles
 at(1, function() home():rebuild() end, "home rebuild (shelf fetch)")
@@ -127,10 +169,7 @@ at(3, function()
     shot("home-browse-chip-and-folder-shelf")
 end, "home")
 -- 2. the chip opens the root (its own on_tap)
-at(1, function()
-    local rows = home():browseRows()
-    rows[2].hits[1].on_tap()
-end, "tap Browse chip")
+at(1, open_chip, "tap Browse chip")
 at(2, function()
     local v = top()
     check("root view", v.title == "Demo courses" and v.folder == nil and v.parent == nil, v.title)
@@ -170,9 +209,11 @@ at(1, function()
     local dialog = menu()
     local first = dialog and dialog.buttons[1] and dialog.buttons[1][1]
     local second = dialog and dialog.buttons[2] and dialog.buttons[2][1]
-    check("menu: the root first, the nearest last",
-        #dialog.buttons == 2 and first.text:find("Demo courses", 1, true) ~= nil
-            and second.text:find("Literature 101", 1, true) ~= nil,
+    local last = dialog and dialog.buttons[3] and dialog.buttons[3][1]
+    check("menu: the root first, the nearest last, then Refresh",
+        #dialog.buttons == 3 and first.text:find("Demo courses", 1, true) ~= nil
+            and second.text:find("Literature 101", 1, true) ~= nil
+            and last.text:find("Refresh", 1, true) ~= nil,
         first and first.text)
     local before, views = full_ui, #App.views
     first.callback()
@@ -182,7 +223,11 @@ end, "pick the root")
 at(1, function() shot("jumped-to-root") end, "after jump")
 at(1, function() top():onTitleTap() end, "title tap on the root")
 at(1, function()
-    check("the root's title tap opens nothing", menu() == nil)
+    local dialog = menu()
+    check("the root's menu is just Refresh", dialog and #dialog.buttons == 1
+        and dialog.buttons[1][1].text:find("Refresh", 1, true) ~= nil, dialog and #dialog.buttons)
+    shot("root-menu-refresh")
+    UIManager:close(dialog)
 end, "root menu")
 -- 6. the empty folder and the failing one (Retry)
 at(1, function() top():openEntry(row_named("Empty folder")) end, "open Empty folder")
@@ -256,5 +301,106 @@ at(2, function()
     shot("lit201-from-shelf")
     top():close()
 end, "shelf folder")
+-- 10. the offline cache (#18): what was opened above shows offline
+at(1, function()
+    local c = Folders.cache()
+    check("opened folders are cached", c:has("folders_demo", nil) and c:has("folders_demo", { folder = "lit101" })
+        and c:has("folders_demo", { folder = "lit101-w1" }) and c:has("folders_demo", { folder = "emu-empty" }))
+    check("a folder never opened is not", not c:has("folders_demo", { folder = "lit101-w2" }))
+    age_cache(3)
+    wifi(false)
+    list_calls = 0
+    open_chip()
+end, "Wi-Fi off, open the root")
+at(2, function()
+    local v = top()
+    check("offline: the root opens from the cache, nothing asked",
+        v.title == "Demo courses" and #v.entries == 5 and wifi_asks == 0 and list_calls == 0,
+        ("rows %d asks %d lists %d"):format(#v.entries, wifi_asks, list_calls))
+    check("…saying how old the copy is", v:statusLine():find("Updated 3 d ago", 1, true) ~= nil, v:statusLine())
+    check("…and not refreshing it offline", not v.pager.loading, v:statusLine())
+    shot("offline-root-from-cache")
+    v:openEntry(row_named("Literature 101"))
+end, "offline root")
+at(2, function()
+    top():openEntry(row_named("Week 1"))
+end, "offline Literature 101")
+at(2, function()
+    local v = top()
+    check("offline: two levels down from the cache",
+        v.title == "Week 1" and #v.entries == 2 and list_calls == 0
+            and titles(Folders.ancestors(v)) == "Demo courses > Literature 101", v:statusLine())
+    shot("offline-week1-from-cache")
+    v:close()
+end, "offline Week 1")
+at(1, function()
+    local views = #App.views
+    top():openEntry(row_named("Week 2"))
+    check("offline: a folder never opened asks for Wi-Fi", wifi_asks == 1 and #App.views == views,
+        ("asks %d views %d->%d"):format(wifi_asks, views, #App.views))
+end, "offline Week 2")
+-- Refresh online: the title menu refetches and repaints
+at(1, function()
+    wifi(true)
+    list_calls = 0
+    top():onTitleTap()
+end, "Wi-Fi on, title menu")
+at(1, function()
+    shot("menu-refresh")
+    menu_button("Refresh").callback()
+    check("Refresh starts at once", top().reloading == true, top():statusLine())
+end, "Refresh")
+at(2, function()
+    local v = top()
+    check("Refresh online repaints with a fresh copy",
+        not v.reloading and list_calls == 1 and v:statusLine():find("Updated", 1, true) == nil
+            and #v.entries == 2, ("%s lists %d"):format(v:statusLine(), list_calls))
+    shot("after-refresh")
+end, "after Refresh")
+-- a stale copy refreshes by itself while Wi-Fi is on
+at(1, function()
+    age_cache(2)
+    top():close()
+    list_calls = 0
+    top():openEntry(row_named("Literature 101"))
+    check("a stale copy opened online refreshes by itself", top().reloading == true, top():statusLine())
+    shot("stale-refreshing")
+end, "stale online")
+at(2, function()
+    check("…and repaints", not top().reloading and list_calls == 1
+        and top():statusLine():find("Updated", 1, true) == nil, top():statusLine())
+end, "background refresh")
+-- a failed refresh keeps the cached rows, the error in the toolbar
+at(1, function()
+    down = true
+    top():onTitleTap()
+end, "server down, title menu")
+at(1, function() menu_button("Refresh").callback() end, "Refresh")
+at(2, function()
+    local v = top()
+    check("a failed refresh keeps the cached rows", #v.entries == 2 and v.pager.err ~= nil, #v.entries)
+    check("…with the error in the toolbar", v:statusLine():find("failed", 1, true) ~= nil, v:statusLine())
+    check("…and the reason behind it", v:statusDetail(v.pager.err):find("Could not refresh", 1, true) ~= nil
+        and v:statusDetail(v.pager.err):find("down", 1, true) ~= nil, v:statusDetail(v.pager.err))
+    shot("refresh-failed-cached-rows")
+    down = false
+    v:close()
+end, "failed refresh")
+-- changing the demo's setting clears its folders
+at(1, function()
+    top():close()   -- the root
+    Settings.setProviderSetting("folders_demo", "archive", true)
+    check("changing a setting clears the demo's folders", not Folders.cache():has("folders_demo", nil)
+        and not Folders.cache():has("folders_demo", { folder = "lit101" }))
+    open_chip()
+end, "archive on")
+at(2, function()
+    local v = top()
+    check("the root is listed again, with the archive", v.entries[1] and v.entries[1].title == "Archive"
+        and #v.entries == 6, v.entries[1] and v.entries[1].title)
+    shot("root-with-archive")
+    v:close()
+    Settings.setProviderSetting("folders_demo", "archive", nil)
+end, "archive")
 at(1, function() set_builtins(true); log("done"); os.exit(0) end, "exit")
 run(1)
