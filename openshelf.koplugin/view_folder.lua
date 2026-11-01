@@ -13,7 +13,8 @@ A folder opened from home, search, a shelf or See all has none, so the tap
 does nothing (#18 adds Refresh there). Back / chevron = up one level (the
 list's on_left closes the view), X = leave OpenShelf. Toolbar `N items ·
 ⚠ failed` (tap for the reason) and list/grid; no filter, a folder has one
-source. Empty → "This folder is empty."; a failed first page → a message
+source. Empty → "This folder is empty."; a failed first page → the
+provider's reason (PROVIDERS.md §5.5) under "Could not open this folder."
 and Retry.
 
 The view keeps `folder` (the row it was opened from, nil for a root) and
@@ -82,10 +83,13 @@ function FolderView:emptyRows()
     end
     if self.pager:loaded() then return { line(_("This folder is empty.")) } end
     if not self.pager.err then return { line(_("Loading…")) } end
+    local reason = P.textBox(self.pager.err, 14, w - 2 * pad, Screen:scaleBySize(66), { color = P.DARK_GRAY })
+    local reason_h = reason:getSize().h + pad
     local bw, bh = Screen:scaleBySize(120), Screen:scaleBySize(36)
     local bh_row = bh + 2 * pad
     return {
         line(_("Could not open this folder.")),
+        { widget = P.row(w, reason_h, reason), h = reason_h, hits = {} },
         {
             widget = P.row(w, bh_row, P.button(_("Retry"), bw, bh, { size = 15 }), { align = "center" }),
             h = bh_row,

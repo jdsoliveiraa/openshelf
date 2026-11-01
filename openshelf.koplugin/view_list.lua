@@ -11,8 +11,8 @@ the toolbar (tap for the reason) and leaves Load more in place to retry.
 
 view_folder.lua builds the folder view on this list: it extends setup
 (page 1 is fetched by the view) and overrides fetchPage (its pages come from
-Catalog.list), countText, failedText, statusDetail, emptyRows, openEntry and
-onTitleTap, and sets in_folder.
+Catalog.list), countText, failedText, statusDetail, emptyRows and
+openEntry, adds onTitleTap, and sets in_folder.
 --]]
 local HorizontalGroup = require("ui/widget/horizontalgroup")
 local InfoMessage = require("ui/widget/infomessage")

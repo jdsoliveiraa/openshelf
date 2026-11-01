@@ -194,9 +194,15 @@ end, "empty")
 at(1, function() top():openEntry(row_named("Folder that fails once")) end, "open failing folder")
 at(2, function()
     check("first listing failed", top().pager.err ~= nil and not top().pager:loaded(), top().pager.err)
+    check("the provider's reason is shown under the message, then Retry", #top():emptyRows() == 3,
+        #top():emptyRows())
     shot("failing-folder-retry")
-    top():loadMore()
-end, "Retry")
+    local retry
+    for __, hit in ipairs(top().hits) do
+        if hit.w == Screen:scaleBySize(120) then retry = hit end   -- the Retry button
+    end
+    tap(top(), retry)
+end, "tap Retry")
 at(2, function()
     check("Retry lists it", #top().entries == 1 and top().pager.err == nil, top():statusLine())
     shot("failing-folder-after-retry")
