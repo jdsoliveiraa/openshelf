@@ -10,6 +10,11 @@ File: { version = 2, records = { … } }. Record shape:
     title, author, format, quality, locator, dedup_key, cover_url, cover_file,
     path, downloaded_at, description, language, year }
 
+A record's `path` is the downloaded file's absolute path, folder directory
+included (DESIGN.md §12.8). An entry's own `path` (the titles of the folders
+above it) and its stamped `dir` are never copied into a record, and toEntry
+gives neither back: a recorded file always goes to its recorded path.
+
 A version-1 file (v0.5: ids keyed by display name, no provider/quality) is
 migrated once on load: `backup` receives the untouched v1 data first (app.lua
 writes it to <file>.v1.bak), then the rewritten file is saved as version 2.
@@ -85,6 +90,17 @@ function Library:findByPath(path)
         if r.path == path then return r end
     end
     return nil
+end
+
+-- Every record's path except the one with id `except_id`, lower-cased (the
+-- Kobo's storage is vfat): the names a new download must not take.
+function Library:ownedPaths(except_id)
+    self:_ensure()
+    local set = {}
+    for __, r in ipairs(self.data.records) do
+        if r.id ~= except_id and type(r.path) == "string" then set[r.path:lower()] = true end
+    end
+    return set
 end
 
 -- Upsert a record for a downloaded entry. Returns the record.

@@ -6,12 +6,17 @@ child and removes the partial.
 
 Location: <home_dir>/OpenShelf — /mnt/onboard/OpenShelf on Kobo — a visible,
 top-level folder so downloads show up in the stock Kobo library as well.
-Filename: "Author - Title.<format>" via util.getSafeFilename.
+Target (DESIGN.md §12.8, openshelf_paths.lua): a recorded entry's recorded
+path; else flat "Author - Title.<format>", or "<provider>/<folders…>/Title.<format>"
+for folder files, with " (2)" when another record owns the name. Worked out
+when the download starts, so two same-named files queued together get
+Name and Name (2). A download replaces whatever is at its target.
 
 Views subscribe to be repainted:
   Downloader.subscribe(fn(event, entry, state))  -- "queued"|"start"|"progress"|"done"|"error"|"cancel"
   Downloader.state(entry) -> { status = "queued"|"active", done = bytes, total = bytes|nil } | nil
-main.lua sets Downloader.on_complete(entry, path) to record the book.
+main.lua sets Downloader.on_complete(entry, path) to record the book, and
+Downloader.library() to App.library() (records decide targets).
 --]]
 local DataStorage = require("datastorage")
 local Device = require("device")
@@ -20,6 +25,7 @@ local Catalog = require("catalog")
 local Entry = require("entry")
 local HttpUtil = require("http_util")
 local Jobs = require("jobs")
+local Paths = require("openshelf_paths")
 local lfs = require("libs/libkoreader-lfs")
 local util = require("util")
 local logger = require("logger")
@@ -27,8 +33,10 @@ local logger = require("logger")
 local Downloader = {}
 
 local FOLDER = "OpenShelf"
-local NAME_LIMIT = 120   -- bytes; keeps names readable in file browsers
 local TICK = 0.5
+
+-- Directories and names, with KOReader's sanitizer.
+Downloader.paths = Paths.new(util.getSafeFilename)
 
 local queue = {}          -- list of { entry = … }
 local active = nil        -- { entry, id, job, part, sizefile, done, total }
@@ -41,23 +49,17 @@ function Downloader.dirPath()
     return (Device.home_dir or DataStorage:getDataDir()) .. "/" .. FOLDER
 end
 
-function Downloader.getDir()
-    local dir = Downloader.dirPath()
-    if lfs.attributes(dir, "mode") ~= "directory" then
-        lfs.mkdir(dir)
-    end
-    return dir
-end
-
-function Downloader.targetPath(entry)
-    local name = string.format("%s - %s.%s",
-        entry.author or "Unknown", entry.title or "book", entry.format or "epub")
-    return Downloader.dirPath() .. "/" .. util.getSafeFilename(name, nil, NAME_LIMIT)
+--- Where `entry` downloads to: its recorded path when it has a record, else
+--- the first name in its directory no other record owns.
+function Downloader.target(entry)
+    local library = Downloader.library and Downloader.library()
+    if not library then return Downloader.paths:target(entry, Downloader.dirPath(), {}) end
+    return (Downloader.paths:targetIn(entry, Downloader.dirPath(), library))
 end
 
 --- Path if this entry's file is on disk (non-empty), else nil.
 function Downloader.exists(entry)
-    local path = Downloader.targetPath(entry)
+    local path = Downloader.target(entry)
     local size = lfs.attributes(path, "size")
     if size and size > 0 then return path end
     return nil
@@ -134,10 +136,11 @@ start_next = function()
     if active or #queue == 0 then return end
     local item = table.remove(queue, 1)
     local entry = item.entry
-    local target = Downloader.targetPath(entry)
+    local target = Downloader.target(entry)
     local part = target .. ".part"
     local sizefile = part .. ".size"
-    Downloader.getDir()
+    local made, merr = util.makePath(target:match("^(.*)/[^/]*$"))
+    if not made then logger.warn("OpenShelf: cannot create the directory for", target, merr) end
     cleanup(part, sizefile)
 
     active = { entry = entry, id = item.id, part = part, sizefile = sizefile, done = 0 }

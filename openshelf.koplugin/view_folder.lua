@@ -25,9 +25,15 @@ folder has one source. Empty → "This folder is empty."; a failed first page
 folder." and Retry; a failed refresh keeps the cached rows and shows in the
 toolbar.
 
-The view keeps `folder` (the row it was opened from, nil for a root) and
-`parent` (the folder view it was listed from, if any): #19 builds folder
-directories from that chain.
+The view keeps `folder` (the row it was opened from, nil for a root),
+`parent` (the folder view it was listed from, if any) and `dir`, its
+directory below OpenShelf/ (DESIGN.md §12.8): the root's is the provider's
+name, a folder's is the one stamped on the row it was opened from (or
+worked out from that row alone: search, shelves). Its rows are shown as
+copies stamped with their own directories (Downloader.paths), so detail,
+hold and Download all agree on where a file lands; the cache keeps them
+unstamped, since the same folder reached another way may get another
+directory.
 --]]
 local ButtonDialog = require("ui/widget/buttondialog")
 local NetworkMgr = require("ui/network/manager")
@@ -39,6 +45,8 @@ local N_ = _.ngettext
 local T = require("ffi/util").template
 
 local App = require("app")
+local Catalog = require("catalog")
+local Downloader = require("downloader")
 local FolderCache = require("openshelf_foldercache")
 local Folders = require("openshelf_folders")
 local Glyphs = require("glyphs")
@@ -51,6 +59,7 @@ local FolderView = ListView:extend{
     provider_id = nil,
     folder = nil,       -- the folder row this view was opened from; nil = the root
     parent = nil,       -- the folder view it was listed from, if any
+    dir = nil,          -- its directory below OpenShelf/ (set in setup)
     in_folder = true,
 }
 
@@ -60,6 +69,12 @@ end
 
 function FolderView:setup()
     ListView.setup(self)
+    local paths = Downloader.paths
+    if self.folder then
+        self.dir = paths:dirFor(self.folder)
+    else
+        self.dir = paths:rootDir(Catalog.nameOf(self.provider_id) or self.provider_id)
+    end
     local copy = Folders.cache():open(self.provider_id, self:locator())
     if not copy then
         self.pager = ShelfPager.new{ page = 0, has_more = true }
@@ -74,7 +89,8 @@ end
 -- The cached copy becomes the view's rows: every page it holds, so Load
 -- more goes on from its last one.
 function FolderView:showCopy(copy)
-    self.pager = ShelfPager.new{ entries = copy.entries, has_more = copy.has_more, page = copy.pages }
+    self.pager = ShelfPager.new{ entries = Downloader.paths:stamped(copy.entries, self.dir),
+        has_more = copy.has_more, page = copy.pages }
     self.entries = self.pager.entries
     self.updated_at = copy.at
 end
@@ -84,11 +100,12 @@ function FolderView:runPage(page, on_done, on_error)
     return Jobs.runPage(Folders.pageTask(self.provider_id, self:locator(), page), on_done, on_error)
 end
 
--- A page for the list (the first one, Load more, Retry): cached as it arrives.
+-- A page for the list (the first one, Load more, Retry): cached as it
+-- arrives, shown stamped.
 function FolderView:fetchPage(page, on_done, on_error)
     return self:runPage(page, function(entries, has_more)
         Folders.cache():putPage(self.provider_id, self:locator(), page, entries, has_more)
-        on_done(entries, has_more)
+        on_done(Downloader.paths:stamped(entries, self.dir), has_more)
     end, on_error)
 end
 

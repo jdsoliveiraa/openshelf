@@ -272,6 +272,7 @@ function Catalog.stamp(provider, entries)
                 if api2 and provider.dedupe == false then e.dedupe = false else e.dedupe = nil end
                 e.provider = provider.id
                 e.source = provider.name
+                e.dir = nil   -- the host stamps directories (openshelf_paths); a provider never places files
                 if e.quality == nil then e.quality = provider.quality or 0 end
                 if e.action ~= Entry.ACTION.DOWNLOAD then e.quality = cap_non_download(e.quality) end
                 out[#out + 1] = e

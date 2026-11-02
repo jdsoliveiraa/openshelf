@@ -6,8 +6,8 @@
 > **api 2** = api 1 + folders (§4.5, §5.5, §5.6; `DESIGN.md` §12, decisions
 > 68–86, grilled 2026-10-29). Status: **being built**; it ships in v0.8.0
 > (on `main`: the catalog side, the dev kit, the folder views, home's
-> Browse chips and the offline folder cache; not yet: folder directories on
-> disk, scoped search and Download all). Released hosts before v0.8.0
+> Browse chips, the offline folder cache and folder directories on disk;
+> not yet: scoped search and Download all). Released hosts before v0.8.0
 > reject `api = 2`.
 
 A **provider** turns one catalog into OpenShelf search results and download

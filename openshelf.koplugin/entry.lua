@@ -10,7 +10,7 @@ Entry shape:
   {
     title, author,                  -- display
     provider = "gutendex",          -- provider id: the key (slots, settings, Entry.id, library)
-    source   = "Project Gutenberg", -- provider display name, for labels only
+    source   = "Project Gutenberg", -- provider display name: labels, and folder files' directory
     action  = Entry.ACTION.*,       -- download | borrow | buy | folder (api 2)
     format  = "epub" | "pdf",       -- display + download extension
     quality = number,               -- higher wins when deduping editions (provider's by default)
