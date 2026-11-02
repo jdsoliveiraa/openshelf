@@ -14,7 +14,10 @@
 -- changing the demo's setting clears its folders. Then scoped search (#21,
 -- §12.7): the search glyph -> the input dialog -> results with folders and
 -- nested files, Load more, a folder opened from them, a search inside a
--- folder, offline asking for Wi-Fi, no glyph without search_in. Then files on the device
+-- folder, offline asking for Wi-Fi, no glyph without search_in. Then Download
+-- all (#20): a two-page folder queues all 60 files and Cancel downloads
+-- empties the queue, hold on a folder row in search downloads its file,
+-- files on the device are skipped, nothing left gives a message. Then files on the device
 -- (#19, §12.8): the two Pride and Prejudice files of Literature 101 and 201
 -- land in their own mirrored directories, ✓ only on the downloaded one; an
 -- recorded file downloaded again from a row with no path keeps its recorded
@@ -123,6 +126,14 @@ demo.list = function(loc, limit, page, ctx)
     list_calls = list_calls + 1
     if down then return nil, "the server is down (emu check)" end
     if loc and loc.folder == "emu-empty" then return {}, false end
+    if loc and loc.folder == "emu-big" then   -- two pages: 60 files of 1000 bytes
+        local first, rows = (page - 1) * limit + 1, {}
+        for i = first, math.min(60, first + limit - 1) do
+            rows[#rows + 1] = ctx.Entry.new{ title = ("Handout %02d"):format(i), author = "OpenShelf Check",
+                format = "epub", size = 1000, locator = { file = "lit101-w1-emma", big = i } }
+        end
+        return rows, first + limit - 1 < 60
+    end
     if loc and loc.folder == "emu-broken" then
         broken_calls = broken_calls + 1
         if broken_calls == 1 then return nil, "the server said no (emu check)" end
@@ -148,7 +159,12 @@ demo.browse = function(key, limit, ctx, page)
         return { edition("Pride and Prejudice", "lit101-w1-pp", 1342, 1), edition("Pride and Prejudice", "lit201-w1-pp", 42671, 2),
                  edition("Emma", "lit101-w1-emma", 158, 1), edition("Emma", "lit101-w1-emma", 158, 2) }, false
     end
-    return demo_list(nil, limit, page, ctx)
+    local rows, more = demo_list(nil, limit, page, ctx)
+    if rows and page == 1 then   -- a two-page folder for Download all (#20)
+        rows[#rows + 1] = ctx.Entry.folder{ title = "Big folder", count = 60, size = 60000,
+            locator = { folder = "emu-big" } }
+    end
+    return rows, more
 end
 check("demo registers", Catalog.register(demo) == true, table.concat(Catalog.ids(), ","))
 set_builtins(false)
@@ -165,6 +181,7 @@ local CHECK_FILES = {
     "Folders demo/Literature 201/Week 1/Pride and Prejudice.epub",
     "OpenShelf Check - Pride and Prejudice.epub", "OpenShelf Check - Pride and Prejudice (2).epub",
     "OpenShelf Check - Emma.epub", "OpenShelf Check - Emma (2).epub",
+    "Folders demo/Literature 101/Week 1/Emma.epub", "Folders demo/Literature 101/Week 2/Frankenstein.epub",
 }
 local function demo_records()
     local t = {}
@@ -180,7 +197,8 @@ local function remove_demo_files()
         if r.path then os.remove(r.path) end
     end
     for __, f in ipairs(CHECK_FILES) do os.remove(ROOT .. "/" .. f) end
-    for __, d in ipairs({ "Literature 101/Week 1", "Literature 101", "Literature 201/Week 1", "Literature 201", "" }) do
+    for __, d in ipairs({ "Literature 101/Week 1", "Literature 101/Week 2", "Literature 101",
+                          "Literature 201/Week 1", "Literature 201", "Big folder", "" }) do
         lfs.rmdir(ROOT .. "/Folders demo" .. (d ~= "" and ("/" .. d) or ""))
     end
 end
@@ -698,6 +716,157 @@ at(2, function()
     for line in ls:lines() do log("LS", line) end
     ls:close()
 end, "My books")
+-- 13. Download all (#20, §12.8): footer button on a two-page folder, Cancel
+-- downloads, hold on a folder row in search, skipping files on the device
+local function confirm_box()
+    for i = #UIManager._window_stack, 1, -1 do
+        local w = UIManager._window_stack[i].widget
+        if w.ok_callback and w.text then return w end
+    end
+end
+local function info_text()
+    for i = #UIManager._window_stack, 1, -1 do
+        local w = UIManager._window_stack[i].widget
+        if w.text and not w.ok_callback and w.timeout then return w.text, w end
+    end
+end
+local function press_ok()
+    local box = confirm_box()
+    UIManager:close(box)
+    box.ok_callback()
+end
+local function footer_hit(view, width)   -- the footer's Download all: the only hit that wide
+    for __, h in ipairs(view.hits) do
+        if h.w == width then return h end
+    end
+end
+local function hold(view, hit)
+    view:onHold(nil, { pos = { x = hit.x + math.floor(hit.w / 2), y = hit.y + math.floor(hit.h / 2) } })
+end
+local function big_files(v)
+    local t = {}
+    for __, e in ipairs(v.entries) do
+        if e.action ~= "folder" then t[#t + 1] = e end
+    end
+    return t
+end
+at(1, function()
+    top():close()   -- My books
+    local big
+    for __, e in ipairs(Browse.get("folders_demo:courses") or {}) do
+        if e.title == "Big folder" then big = e end
+    end
+    App.openEntry(big, home())
+end, "open Big folder from the shelf")
+at(2, function()
+    local v = top()
+    v.page = v.total_pages   -- Load more shows on the last page
+    v:rebuild()
+    local labels = {}
+    for i, b in ipairs(v:footerButtons()) do labels[i] = b.text end
+    check("a two-page folder: page 1 of 50 rows, the footer offers Download all and Load more",
+        v.title == "Big folder" and #v.entries == 50 and table.concat(labels, ",") == "Download all,Load more",
+        table.concat(labels, ","))
+    UIManager:forceRePaint()
+    shot("big-folder-footer")
+    tap(v, footer_hit(v, Screen:scaleBySize(150)))
+end, "tap Download all")
+at(2, function()
+    local box = confirm_box()
+    check("Download all fetched page 2 and asks: Download 60 files (58 KB)?",
+        box and box.text == "Download 60 files (58 KB)?", box and box.text)
+    local copy = Folders.cache():open("folders_demo", { folder = "emu-big" })
+    check("…the page it fetched is cached (counts as opening)", copy and copy.pages == 2, copy and copy.pages)
+    check("…and joins the view", #top().entries == 60, #top().entries)
+    shot("download-all-confirm")
+    press_ok()
+    local v, n, right = top(), 0, 0
+    for i, e in ipairs(big_files(v)) do
+        if Downloader.state(e) then n = n + 1 end
+        if Downloader.target(e) == ("%s/Folders demo/Big folder/Handout %02d.epub"):format(ROOT, i) then right = right + 1 end
+    end
+    check("every file queued once", n == 60, n)
+    check("…each to the folder's directory", right == 60, right)
+    local labels = {}
+    for i, b in ipairs(v:footerButtons()) do labels[i] = b.text end
+    check("the button reads Cancel downloads", labels[1] == "Cancel downloads", labels[1])
+    v:rebuild()
+    UIManager:forceRePaint()
+    shot("cancel-downloads")
+    tap(v, footer_hit(v, Screen:scaleBySize(150)))
+    local left = 0
+    for __, e in ipairs(big_files(v)) do
+        if Downloader.state(e) then left = left + 1 end
+    end
+    check("Cancel downloads empties the queue", left == 0, left)
+    check("…and leaves no empty directory behind",
+        require("libs/libkoreader-lfs").attributes(ROOT .. "/Folders demo/Big folder") == nil)
+    check("…and the button is Download all again", v:footerButtons()[1].text == "Download all", v:footerButtons()[1].text)
+end, "confirm, then cancel")
+at(1, function()
+    top():close()
+    home():startSearch("week 2")
+end, "search for Week 2")
+at(3, function()
+    local h = home()
+    local row_hit
+    for __, hit in ipairs(h.hits) do
+        if hit.w == h.screen_w then row_hit = hit; break end   -- the first result row: the Week 2 folder
+    end
+    shot("search-week2-folder")
+    hold(h, row_hit)
+end, "hold on the Week 2 folder row")
+at(2, function()
+    local box = confirm_box()
+    check("hold on a folder row in search: Download 1 file (287 KB)?", box and box.text == "Download 1 file (287 KB)?",
+        box and box.text)
+    shot("hold-confirm")
+    press_ok()
+end, "confirm the hold")
+at(6, function()
+    local path = ROOT .. "/Folders demo/Literature 101/Week 2/Frankenstein.epub"
+    check("…downloads where it would from the opened folder", (require("libs/libkoreader-lfs").attributes(path, "size") or 0) > 0,
+        path)
+    home():goHome()
+    open_chip()
+end, "Frankenstein")
+at(2, function() top():openEntry(row_named("Literature 101")) end, "Literature 101")
+at(2, function()
+    local week1
+    for __, hit in ipairs(top().hits) do
+        if hit.w == top().screen_w and not week1 then week1 = hit end   -- the first row: Week 1
+    end
+    hold(top(), week1)
+end, "hold on Week 1 (Pride and Prejudice on the device)")
+at(2, function()
+    local box = confirm_box()
+    check("files on the device are skipped: Download 1 file (483 KB)?", box and box.text == "Download 1 file (483 KB)?",
+        box and box.text)
+    press_ok()
+end, "confirm Emma")
+at(6, function()
+    local path = ROOT .. "/Folders demo/Literature 101/Week 1/Emma.epub"
+    check("…Emma lands beside it", (require("libs/libkoreader-lfs").attributes(path, "size") or 0) > 0, path)
+    top():close()
+    top():openEntry(row_named("Literature 201"))
+end, "Literature 201")
+at(2, function()
+    local week1
+    for __, hit in ipairs(top().hits) do
+        if hit.w == top().screen_w and not week1 then week1 = hit end
+    end
+    hold(top(), week1)
+end, "hold on Literature 201's Week 1 (all on the device)")
+at(2, function()
+    local text = info_text()
+    check("nothing left -> a short message, no confirm", text == "Nothing to download in this folder." and not confirm_box(),
+        text)
+    shot("nothing-to-download")
+    local ls = io.popen("cd '" .. ROOT .. "' && ls -R")
+    for line in ls:lines() do log("LS2", line) end
+    ls:close()
+    while #App.views > 1 do top():close() end
+end, "nothing to download")
 at(1, function()
     local Library = require("library")
     local path = ROOT .. "/Folders demo/Literature 101/Week 1/Pride and Prejudice.epub"

@@ -168,14 +168,20 @@ function App.openSearchIn(opts)
     end)
 end
 
---- Long-press on a book anywhere: download it straight away (DESIGN.md 8/32).
+--- Long-press on a book anywhere: download it straight away (DESIGN.md 8/32);
+--- on a folder row: Download all into that row's directory (decision 82),
+--- so a folder found by search downloads where it would when opened.
 function App.holdDownload(entry, view)
     local InfoMessage = require("ui/widget/infomessage")
     local NetworkMgr = require("ui/network/manager")
     local _ = require("gettext")
     local Entry = require("entry")
-    -- Hold on a folder will be Download all (decision 82); nothing until then.
-    if entry.action == Entry.ACTION.FOLDER then return end
+    if entry.action == Entry.ACTION.FOLDER then
+        require("download_all").start{
+            provider_id = entry.provider, folder = entry, dir = Downloader.paths:dirFor(entry),
+        }
+        return
+    end
     -- Buy rows have nothing to download: hold opens the detail page with the
     -- store URL + QR instead (decision 49).
     if entry.action == Entry.ACTION.BUY then

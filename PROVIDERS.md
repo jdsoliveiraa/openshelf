@@ -5,9 +5,9 @@
 > as of v0.6.0 — the built-ins and the host both use api 1.
 > **api 2** = api 1 + folders (§4.5, §5.5, §5.6; `DESIGN.md` §12, decisions
 > 68–86, grilled 2026-10-29). Status: **being built**; it ships in v0.8.0
-> (on `main`: the catalog side, the dev kit, the folder views, home's
-> Browse chips, the offline folder cache, folder directories on disk and
-> scoped search; not yet: Download all). Released hosts before v0.8.0
+> (all of it is on `main`: the catalog side, the dev kit, the folder views,
+> home's Browse chips, the offline folder cache, folder directories on disk,
+> scoped search and Download all; not released yet). Released hosts before v0.8.0
 > reject `api = 2`.
 
 A **provider** turns one catalog into OpenShelf search results and download

@@ -2551,6 +2551,37 @@ end
 -- Self-update (#6): version compare, release JSON, checksum file, staged
 -- plugin validation, zip entry vetting, 24 h throttle, "Later", folder swap.
 ---------------------------------------------------------------------------
+print("== Folders: Download all, the selection (#20, DESIGN.md 12.8) ==")
+;(function()
+local Folders = require("openshelf_folders")
+local function dl(id, size, action)
+    local fr = Entry.new{ title = "File " .. id, locator = { url = "https://da/" .. id }, size = size, action = action }
+    fr.provider = "da"
+    return fr
+end
+local da_rows = {
+    dl("a", 1000), dl("b", 2000),
+    Entry.folder{ title = "Sub", locator = { folder = "sub" } },          -- subfolders are not taken
+    dl("c", 500, "buy"),                                                  -- buy rows have nothing to download
+    dl("d", 4000),                                                        -- already on the device
+    dl("a", 1000),                                                        -- the same file again (a page shifted)
+    dl("e", 300, "borrow"),                                               -- borrow rows download like books
+}
+local on_device = { [Entry.id(da_rows[5])] = true }
+local picked, size = Folders.downloadable(da_rows, function(r) return on_device[Entry.id(r)] end)
+local titles = {}
+for i, r in ipairs(picked) do titles[i] = r.title end
+eq(table.concat(titles, ","), "File a,File b,File e", "files directly in the folder, each once, in order")
+eq(size, 3300, "their sizes summed")
+local unknown = { dl("x", 100), Entry.new{ title = "No size", locator = { url = "https://da/n" } } }
+local p2, sz2 = Folders.downloadable(unknown, function() return false end)
+check(#p2 == 2 and sz2 == nil, "a row without a size -> no total (the confirm shows the count only)", sz2)
+local p3, sz3 = Folders.downloadable({ da_rows[3], da_rows[4], da_rows[5] }, function(r) return on_device[Entry.id(r)] end)
+check(#p3 == 0 and sz3 == nil, "only folders, buy rows and files on the device -> nothing to download")
+local p4 = Folders.downloadable({}, function() return false end)
+eq(#p4, 0, "an empty folder -> nothing")
+end)()
+
 print("== openshelf_updater_logic ==")
 ;(function() -- own function: the main chunk is at the 200-local limit
 local U = require("openshelf_updater_logic")

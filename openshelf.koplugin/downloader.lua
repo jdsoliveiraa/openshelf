@@ -122,6 +122,17 @@ local function cleanup(part, sizefile)
     os.remove(sizefile)
 end
 
+-- After a failed or cancelled download: the directories it created and left
+-- empty go, up to (not including) OpenShelf/. rmdir removes empty ones only.
+local function prune(part)
+    local root = Downloader.dirPath()
+    local dir = part:match("^(.*)/[^/]*$")
+    while dir and #dir > #root and dir:sub(1, #root + 1) == root .. "/" do
+        if not lfs.rmdir(dir) then break end
+        dir = dir:match("^(.*)/[^/]*$")
+    end
+end
+
 local start_next
 
 local function finish(event, entry, payload)
@@ -148,6 +159,7 @@ start_next = function()
 
     local function fail(err)
         cleanup(part, sizefile)
+        prune(part)
         finish("error", entry, { err = err })
     end
 
@@ -246,6 +258,7 @@ function Downloader.cancel(entry)
         local a = active
         if a.job then a.job:cancel() end
         cleanup(a.part, a.sizefile)
+        prune(a.part)
         finish("cancel", entry, nil)
         return true
     end
