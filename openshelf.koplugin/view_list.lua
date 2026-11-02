@@ -10,10 +10,16 @@ job (Jobs.DEADLINE) and appends it, like search results. A failure shows in
 the toolbar (tap for the reason) and leaves Load more in place to retry.
 
 view_folder.lua builds the folder view on this list: it extends setup
-(its cached copy, else page 1 fetched by the view) and fetch, overrides
-fetchPage (its pages come from Catalog.list), countText, statusParts,
-loadingText, failedText, statusDetail, emptyRows and openEntry, adds
-onTitleTap, and sets in_folder.
+(its cached copy, else page 1 fetched by the view), fetch and
+toolbarButtons (search glyph), overrides fetchPage (its pages come from
+Catalog.list), countText, statusParts, loadingText, failedText,
+statusDetail, emptyText, failedMessage and openEntry, adds onTitleTap, and
+sets in_folder. view_search_in.lua (scoped search results) is the same
+kind of list fed by Catalog.searchIn.
+
+A list whose pager starts with nothing loaded (`page = 0`: the view fetches
+page 1 itself) shows "Loading…" until it arrives, and when it fails, the
+reason under failedMessage() with Retry.
 --]]
 local HorizontalGroup = require("ui/widget/horizontalgroup")
 local InfoMessage = require("ui/widget/infomessage")
@@ -131,12 +137,48 @@ function ListView:showStatusDetail()
     UIManager:show(InfoMessage:new{ text = self:statusDetail(self.pager.err) })
 end
 
--- What the pane shows when there are no rows.
+function ListView:emptyText()
+    return _("Nothing here yet.")
+end
+
+-- Over the reason when a list's first page failed.
+function ListView:failedMessage()
+    return _("Could not load this list.")
+end
+
+-- What the pane shows when there are no rows: emptyText(), or for a list
+-- whose first page has not arrived, "Loading…" / the reason with Retry.
 function ListView:emptyRows()
+    local w, pad = self.screen_w, Size.padding.default
     local h = Screen:scaleBySize(60)
+    local function line(text)
+        return {
+            widget = P.row(w, h, P.text(text, 15, { color = P.DARK_GRAY, max_width = w - 2 * pad })),
+            h = h, hits = {},
+        }
+    end
+    if not self.pager or self.pager:loaded() then return { line(self:emptyText()) } end
+    if not self.pager.err then return { line(self:loadingText()) } end
+    local reason = P.textBox(self.pager.err, 14, w - 2 * pad, Screen:scaleBySize(66), { color = P.DARK_GRAY })
+    local reason_h = reason:getSize().h + pad
+    local bw, bh = Screen:scaleBySize(120), Screen:scaleBySize(36)
+    local bh_row = bh + 2 * pad
+    return {
+        line(self:failedMessage()),
+        { widget = P.row(w, reason_h, reason), h = reason_h, hits = {} },
+        {
+            widget = P.row(w, bh_row, P.button(_("Retry"), bw, bh, { size = 15 }), { align = "center" }),
+            h = bh_row,
+            hits = { { x = math.floor((w - bw) / 2), w = bw, on_tap = function() self:loadMore() end } },
+        },
+    }
+end
+
+-- Glyph buttons at the right end of the toolbar, left to right.
+function ListView:toolbarButtons()
     return { {
-        widget = P.row(self.screen_w, h, P.text(_("Nothing here yet."), 15, { color = P.DARK_GRAY })),
-        h = h, hits = {},
+        glyph = self.view_mode == "grid" and Glyphs.list or Glyphs.grid,
+        on_tap = function() self:toggleView() end,
     } }
 end
 
@@ -144,21 +186,22 @@ function ListView:buildRows()
     local rows = {}
     local w, pad = self.screen_w, Size.padding.default
     local tb_h, footer_h, avail_h = self:geometry()
+    local buttons = self:toolbarButtons()
     local btn_w = Screen:scaleBySize(44)
-    local left_w = w - 2 * pad - btn_w - pad
-    local toolbar = HorizontalGroup:new{
-        align = "center",
-        P.box(left_w, tb_h, P.text(self:statusLine(), 13, { color = P.DARK_GRAY, max_width = left_w })),
-        P.hspace(pad),
-        P.glyphButton(self.view_mode == "grid" and Glyphs.list or Glyphs.grid, btn_w, tb_h),
-    }
+    local left_w = w - 2 * pad - #buttons * (btn_w + pad)
+    local tb_items = { P.box(left_w, tb_h, P.text(self:statusLine(), 13, { color = P.DARK_GRAY, max_width = left_w })) }
+    local tb_hits = { { x = 0, w = pad + left_w, on_tap = function() self:showStatusDetail() end } }
+    local x = pad + left_w
+    for __, b in ipairs(buttons) do
+        tb_items[#tb_items + 1] = P.hspace(pad)
+        tb_items[#tb_items + 1] = P.glyphButton(b.glyph, btn_w, tb_h)
+        tb_hits[#tb_hits + 1] = { x = x + pad, w = btn_w, on_tap = b.on_tap }
+        x = x + pad + btn_w
+    end
     rows[#rows + 1] = {
-        widget = P.row(w, tb_h, toolbar, { pad = pad, line = true }),
+        widget = P.row(w, tb_h, HorizontalGroup:new{ align = "center", unpack(tb_items) }, { pad = pad, line = true }),
         h = tb_h,
-        hits = {
-            { x = 0, w = pad + left_w, on_tap = function() self:showStatusDetail() end },
-            { x = w - pad - btn_w, w = btn_w, on_tap = function() self:toggleView() end },
-        },
+        hits = tb_hits,
     }
 
     local prows, total, page_entries = Pane.rows(self, self.entries, {

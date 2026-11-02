@@ -251,8 +251,10 @@ end
 -- becomes the provider's (then capped below any download for borrow/buy
 -- rows), and a row without a usable locator is dropped with a log line.
 -- Rows that skipped ctx.Entry are normalised first (a raw `action =
--- "folder"` row becomes a folder row). api 1 knows nothing of folders: its
--- folder rows are dropped with a log line and `size` / `path` stripped.
+-- "folder"` row becomes a folder row). A `dir` is dropped: directories are
+-- the host's stamp (openshelf_paths), never a provider's. api 1 knows
+-- nothing of folders: its folder rows are dropped with a log line and
+-- `size` / `path` stripped.
 function Catalog.stamp(provider, entries)
     local out = {}
     local api2 = provider.api == 2

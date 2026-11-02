@@ -11,7 +11,10 @@
 -- ("Updated 3 d ago", nothing asked), a folder never opened asks for Wi-Fi,
 -- Refresh online repaints, a stale copy refreshes by itself while online, a
 -- failed refresh keeps the cached rows with the error in the toolbar, and
--- changing the demo's setting clears its folders. Then files on the device
+-- changing the demo's setting clears its folders. Then scoped search (#21,
+-- §12.7): the search glyph -> the input dialog -> results with folders and
+-- nested files, Load more, a folder opened from them, a search inside a
+-- folder, offline asking for Wi-Fi, no glyph without search_in. Then files on the device
 -- (#19, §12.8): the two Pride and Prejudice files of Literature 101 and 201
 -- land in their own mirrored directories, ✓ only on the downloaded one; an
 -- recorded file downloaded again from a row with no path keeps its recorded
@@ -29,6 +32,7 @@ local Browse = require("browse")
 local Catalog = require("catalog")
 local Downloader = require("downloader")
 local Folders = require("openshelf_folders")
+local Glyphs = require("glyphs")
 local Settings = require("settings")
 local Shelf = require("widget_shelf")
 local NetworkMgr = require("ui/network/manager")
@@ -152,8 +156,16 @@ Settings.setProviderSetting("folders_demo", "archive", nil)
 Folders.cache():clearProvider("folders_demo")   -- every run starts with nothing cached
 
 -- Every run starts with none of the demo's files (#19): its recorded files
--- go, then the directories they leave empty (rmdir never removes anything else).
+-- go, and the files this script downloads, by exact name (another emulator
+-- home, e.g. another worktree, shares ~/OpenShelf but not the records), then
+-- the directories they leave empty (rmdir never removes anything else).
 local ROOT = Downloader.dirPath()
+local CHECK_FILES = {
+    "Folders demo/Literature 101/Week 1/Pride and Prejudice.epub",
+    "Folders demo/Literature 201/Week 1/Pride and Prejudice.epub",
+    "OpenShelf Check - Pride and Prejudice.epub", "OpenShelf Check - Pride and Prejudice (2).epub",
+    "OpenShelf Check - Emma.epub", "OpenShelf Check - Emma (2).epub",
+}
 local function demo_records()
     local t = {}
     for __, r in ipairs(App.library():all()) do
@@ -167,6 +179,7 @@ local function remove_demo_files()
         App.removeFromLibrary(r)
         if r.path then os.remove(r.path) end
     end
+    for __, f in ipairs(CHECK_FILES) do os.remove(ROOT .. "/" .. f) end
     for __, d in ipairs({ "Literature 101/Week 1", "Literature 101", "Literature 201/Week 1", "Literature 201", "" }) do
         lfs.rmdir(ROOT .. "/Folders demo" .. (d ~= "" and ("/" .. d) or ""))
     end
@@ -456,6 +469,121 @@ at(2, function()
     v:close()
     Settings.setProviderSetting("folders_demo", "archive", nil)
 end, "archive")
+-- 12. scoped search (#21, §12.7): the search glyph, the results view, Load more
+local function input_dialog()
+    for i = #UIManager._window_stack, 1, -1 do
+        local w = UIManager._window_stack[i].widget
+        if w.getInputText and w.button_table then return w end
+    end
+end
+local function glyphs_of(v)
+    local t = {}
+    for i, b in ipairs(v:toolbarButtons()) do t[i] = b.glyph end
+    return t
+end
+local recents_before, per_source_before
+at(1, function()
+    recents_before = table.concat(Settings.recents(), "|")
+    per_source_before = Settings.perSource()
+    Settings.setPerSource(10)
+    open_chip()
+end, "open the root for scoped search")
+at(2, function()
+    local v = top()
+    local g = glyphs_of(v)
+    check("the root shows a search glyph before list/grid", #g == 2 and g[1] == Glyphs.search, #g)
+    -- tap it where a finger would: the toolbar hit right of the status text
+    local hit
+    for __, h in ipairs(v.hits) do
+        if h.y < v.content_top + Screen:scaleBySize(36) and h.x > 0 and not hit then hit = h end
+    end
+    tap(v, hit)
+end, "tap the search glyph")
+at(1, function()
+    local dialog = input_dialog()
+    check("the glyph opens the stock input dialog", dialog ~= nil)
+    shot("search-in-dialog")
+    dialog:setInputText("e")
+    dialog.button_table:getButtonById("search").callback()
+end, "search the root for e")
+at(2, function()
+    local v = top()
+    check("results view titled with the query and the folder", v.title == "“e” in Demo courses", v.title)
+    check("page 1: 10 rows at the search page size", #v.entries == 10 and v.pager.has_more, #v.entries)
+    local folders, nested = 0, false
+    for __, e in ipairs(v.entries) do
+        if e.action == "folder" then folders = folders + 1 end
+        if e.title == "Emma" then nested = true end   -- Demo courses > Literature 101 > Week 1
+    end
+    check("it finds folders and a nested file", folders > 0 and nested, folders)
+    check("…and is not a recent search", table.concat(Settings.recents(), "|") == recents_before)
+    dump("search in root")
+    shot("search-in-results-p1")
+    v:loadMore()
+end, "Load more")
+at(2, function()
+    local v = top()
+    check("Load more appends page 2", #v.entries == 12 and not v.pager.has_more, #v.entries)
+    v:toggleView()
+    shot("search-in-results-grid")
+    v:toggleView()
+end, "page 2")
+at(1, function()
+    local v = top()
+    local week2
+    for __, e in ipairs(v.entries) do
+        if e.title == "Week 2" then week2 = e end
+    end
+    check("a folder row shows its path as the second line", Folders.secondLine(week2, v.in_folder) == "Literature 101",
+        Folders.secondLine(week2, v.in_folder))
+    check("…and lands under its path (#19)", Downloader.paths:dirFor(week2) == "Folders demo/Literature 101/Week 2",
+        Downloader.paths:dirFor(week2))
+    v:openEntry(week2)
+end, "open a folder from the results")
+at(2, function()
+    local v = top()
+    check("it opens a folder view with no folder views below", v.title == "Week 2" and #Folders.ancestors(v) == 0, v.title)
+    shot("search-in-opened-folder")
+    v:close()
+    top():close()   -- the results
+end, "folder from results")
+-- inside a folder: a nested file and a folder
+at(1, function() top():openEntry(row_named("Literature 201")) end, "Literature 201")
+at(2, function() top():searchIn("e") end, "search Literature 201")
+at(2, function()
+    local v = top()
+    local titles_found = {}
+    for __, e in ipairs(v.entries) do titles_found[#titles_found + 1] = e.title end
+    local found = table.concat(titles_found, ",")
+    check("in a folder: its subfolders and a file nested two levels down",
+        v.title == "“e” in Literature 201" and found:find("Seminar", 1, true) ~= nil
+            and found:find("Dracula", 1, true) ~= nil and not found:find("Emma", 1, true), found)
+    shot("search-in-lit201")
+    v:close()
+end, "results in Literature 201")
+-- offline: asks for Wi-Fi, opens nothing
+at(1, function()
+    wifi(false)
+    local asks, views = wifi_asks, #App.views
+    top():searchIn("e")
+    check("offline: scoped search asks for Wi-Fi", wifi_asks == asks + 1 and #App.views == views,
+        ("asks +%d views %d->%d"):format(wifi_asks - asks, views, #App.views))
+    wifi(true)
+end, "offline scoped search")
+-- a provider without search_in: no glyph
+at(1, function()
+    local p = Catalog.byId("folders_demo")
+    local search_in = p.search_in
+    p.search_in = nil
+    top():rebuild()
+    local g = glyphs_of(top())
+    check("a provider without search_in shows no search glyph", #g == 1 and g[1] ~= Glyphs.search, #g)
+    shot("no-search-glyph")
+    p.search_in = search_in
+    Settings.setPerSource(per_source_before)
+    top():close()
+    top():close()
+end, "no search_in")
 -- 11. files on the device (#19): mirrored directories, names, (2), ✓, My books
 local PP = "Pride and Prejudice"
 local again_entry, again_mtime

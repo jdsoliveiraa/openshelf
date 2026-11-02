@@ -2481,6 +2481,47 @@ eq(planted_out[1].dir, nil, "Catalog.stamp drops a dir a provider set")
 eq(paths:target(planted_out[1], root, {}), root .. "/Unknown - X.epub", "…so the row lands flat in OpenShelf/")
 end)()
 
+print("== Folders: scoped search, pure parts (#21, DESIGN.md 12.7) ==")
+;(function()
+local Folders = require("openshelf_folders")
+local ShelfPager = require("shelf_pager")
+local asked = {}
+check(Catalog.register{ api = 2, id = "si_demo", name = "SI Demo", root = "SI Top",
+    search = function() return {}, false end, resolve = function(loc) return loc.url end,
+    list = function() return {}, false end,
+    search_in = function(loc, query, limit, page, ctx)
+        asked[#asked + 1] = { loc = loc, query = query, limit = limit, page = page }
+        if query == "boom" then return nil, "search is down" end
+        local found = {}
+        for i = 1, (page == 1 and limit - 1 or 2) do
+            found[i] = ctx.Entry.new{ title = query .. " " .. page .. "." .. i,
+                locator = { url = "https://si/" .. page .. "/" .. i }, path = { "SI Top", "Sub" } }
+        end
+        found[#found + 1] = ctx.Entry.folder{ title = "Folder " .. page, locator = { folder = "f" .. page } }
+        return found, page == 1
+    end }, "an api-2 provider with search_in registers")
+
+-- One page of a scoped search, for a job: Catalog.searchIn at the search page size.
+local res = Folders.searchTask("si_demo", { folder = "sub" }, "sso", 10, 1)()
+eq(#res.entries, 10, "page 1: the provider's rows, folders included")
+eq(res.entries[10].action, "folder", "…a folder row among them")
+eq(res.has_more, true, "…and has_more")
+check(asked[1].loc.folder == "sub" and asked[1].query == "sso" and asked[1].limit == 10 and asked[1].page == 1,
+      "search_in gets the folder's locator, the query, the search page size and the page")
+Folders.searchTask("si_demo", nil, "x", 15, 1)()
+check(asked[2].loc == nil and asked[2].limit == 15, "nil locator = the root")
+local ok, err = pcall(Folders.searchTask("si_demo", nil, "boom", 10, 1))
+check(not ok and tostring(err):find("search is down", 1, true) ~= nil, "a failed search raises its reason", err)
+
+-- Load more over the same paging model as See all and folder views.
+local pager = ShelfPager.new{ page = 0, has_more = true }
+pager:append(Folders.searchTask("si_demo", nil, "sso", 10, pager:begin())().entries, true)
+local page2 = Folders.searchTask("si_demo", nil, "sso", 10, pager:begin())()
+eq(pager:append(page2.entries, page2.has_more), 3, "Load more appends page 2 (2 files + a folder)")
+eq(#pager.entries, 13, "13 rows after two pages")
+eq(pager:canLoadMore(), false, "page 2 said no more")
+end)()
+
 ---------------------------------------------------------------------------
 -- Closing a view refreshes the panel (#25): KOReader drops the refresh of a
 -- bare UIManager:close, so every OpenShelf view asks for a full-screen "ui"

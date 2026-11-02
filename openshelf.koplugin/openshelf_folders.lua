@@ -5,6 +5,8 @@ uses secondLine and metaLine for folder rows.
 
   Folders.PAGE_SIZE                        rows per list() call (50)
   Folders.pageTask(id, locator, page)      -> function for Jobs.run: { entries, has_more }
+  Folders.searchTask(id, locator, query, limit, page)
+                                           -> the same for a scoped search (search_in)
   Folders.secondLine(entry, in_folder)     -> a folder row's second line ("" for none)
   Folders.metaLine(entry, label, words)    -> its meta line, "Source · 43 files · 120 MB"
   Folders.ancestors(view)                  -> the folder views it was listed from, root first
@@ -22,13 +24,25 @@ local Folders = {}
 
 Folders.PAGE_SIZE = 50
 
---- One page of a folder (locator nil = the provider's root), for Jobs.run:
---- raises the provider's reason on failure.
+-- A Catalog page call (rows, has_more | nil, reason) as a job's result:
+-- { entries, has_more }, raising the provider's reason on failure.
+local function page_result(what, entries, more_or_err)
+    if not entries then error(more_or_err or (what .. " failed"), 0) end
+    return { entries = entries, has_more = more_or_err == true }
+end
+
+--- One page of a folder (locator nil = the provider's root), for Jobs.run.
 function Folders.pageTask(id, locator, page)
     return function()
-        local entries, more_or_err = Catalog.list(id, locator, Folders.PAGE_SIZE, page)
-        if not entries then error(more_or_err or "list failed", 0) end
-        return { entries = entries, has_more = more_or_err == true }
+        return page_result("list", Catalog.list(id, locator, Folders.PAGE_SIZE, page))
+    end
+end
+
+--- One page of a scoped search in a folder and everything below it, for
+--- Jobs.run. limit = the search page size (Results per source: 10, 15 or 30).
+function Folders.searchTask(id, locator, query, limit, page)
+    return function()
+        return page_result("search", Catalog.searchIn(id, locator, query, limit, page))
     end
 end
 
