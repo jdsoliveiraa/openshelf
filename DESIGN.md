@@ -712,3 +712,66 @@ An entry's `path` (a list of folder titles) is not the library record's
 | 84 | Shelves may hold folder rows: cached with the shelf, drawn as titled folder tiles, tap opens |
 | 85 | First release = host + api 2 + dev kit: `examples/folders_demo.lua` (api 2, offline), template stays api 1, provider_check api-2 steps, unit tests, `tools/emu-folders-check.lua`; built-ins unchanged; IA collections and OPDS navigation later |
 | 86 | Built on #12's paged See all list; one release, v0.8.0 |
+
+### 12.11 Build notes (v0.8.0, 2026-11-02)
+Built as tickets #23, #17, #18, #19, #21, #20 (PRs #24–#29). Each was verified
+on the macOS emulator with `tools/emu-folders-check.lua`, which now walks the
+whole feature with real downloads. Deviations and findings, all deliberate:
+
+- **Sizes** use the existing `P.friendlySize`: `120.0 MB`, not the `120 MB`
+  in §12.5's example.
+- **List-row folder tiles show the glyph only**: a list row's tile is too
+  narrow for the title, which sits beside it anyway. Shelf tiles and grid
+  cells carry the title (§12.5).
+- **"Updated N d ago" and the 24 h test use the oldest cached page.** A copy
+  is as old as its oldest part.
+- **A refresh replaces the copy only when every page has arrived.** A refresh
+  that fails halfway keeps the old copy whole. The toolbar says "Refreshing…"
+  while one runs.
+- **Opening a cached folder marks it in memory only.** The mark is saved
+  with the next write, so opening a folder offline doesn't rewrite the whole
+  file. A folder just stored is never the one evicted, even when the clock
+  goes back.
+- **Saving a provider setting unchanged clears nothing.** Only a changed
+  value clears that provider's folders.
+- **Only folder views stamp `dir` on their rows**, as copies, so the cache
+  stays unstamped. Every other row's directory follows from the row alone
+  and is worked out when needed, which gives the same result as a stamp. The
+  host drops a `dir` a provider sets (PROVIDERS.md §4.1).
+- **Directory segments also lose trailing dots and spaces.** KOReader's
+  sanitizer reads `Notes.` as a name plus an empty extension, and vfat drops
+  trailing dots anyway. A title ending in `.<ext>.` is not extended either.
+- **The target rule lives in the pure `openshelf_paths.lua`**
+  (`Paths:targetIn` / `Paths:status`), so it is unit-tested.
+  `Downloader.target` and `App.bookStatus` call it.
+- **A failed or cancelled download removes the directories it created and
+  left empty**, up to `OpenShelf/`, with `rmdir` only. Without this, a
+  cancelled Download all left an empty folder behind.
+- **Scoped search reads the page size once**, when the results open, so one
+  search keeps one page size.
+- **Download all:**
+  - The footer reads page label, Download all, Load more. Download all sits
+    left of Load more so Load more keeps its place from §11; §12.4 lists
+    them the other way round.
+  - The size is shown only when every file has one.
+  - From the footer it adds the pages it fetched to the open view.
+  - Its listing stops at a page that adds no new row, even one that says
+    `has_more`, so a provider ignoring `page` can't make it list forever.
+  - Cancel removes the queued files before the active one.
+  - The footer shows "Listing…" while the pages load.
+  - A batch whose network drops still shows one "Download failed" dialog per
+    file, as single downloads always did; a summary is a follow-up.
+- **Download events repaint once per burst** (`ViewBase:rebuildSoon`, home
+  included). Queueing or cancelling 60 files no longer repaints 60 times.
+- **`folders_demo` gained a "Show the archive" toggle** that adds an Archive
+  folder, like UCStudent's "All years". It shows that a settings change
+  clears the cached folders.
+- **The emulator downloads into the real `~/OpenShelf`** (its `home_dir` is
+  `$HOME`). The check removes only its own recorded files and its
+  distinctively named ones (`Folders demo/…`, `OpenShelf Check - …`), plus
+  the directories they leave empty.
+- **Not verified yet: the Kobo.** Still to check there:
+  - tap and Back through three levels;
+  - hold on a folder row (the emulator calls `onHold` directly);
+  - the subprocess deadline for `list` / `search_in`;
+  - UCStudent end to end.

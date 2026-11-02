@@ -214,6 +214,23 @@ Device has `ffi/archiver`, `ffi/sha2`, `libarchive.so.13`, `askForRestart`
 Kobo: the forked install job and an end-to-end update once a release with
 the updater *and* a later release exist.
 
+**Built (v0.8.0, 2026-11-02; on-device verification pending): folders (api 2)**
+— a provider can expose nested structure (`DESIGN.md` §12, decisions 68–86;
+`PROVIDERS.md` §4.5, §5.5, §5.6). Folder rows from `ctx.Entry.folder`, listed
+by `list` (nil = the provider's `root`, a Browse chip on home); one stacked
+view per folder with an ancestors title menu and Refresh; an offline-first
+folder cache (`openshelf_folders.json`, never expires, refreshed when Wi-Fi is
+already on and the copy is > 24 h old, 500 folders); files land in mirrored
+directories `OpenShelf/<provider>/<folders…>/` with a ` (2)` suffix only
+against another record's name (`openshelf_paths.lua`); scoped search
+(`search_in`); Download all (footer button, hold on a folder row). Dev kit:
+`examples/folders_demo.lua`, provider_check's folders step,
+`tools/emu-folders-check.lua` (86 checks, real downloads). Tickets #23, #17,
+#18, #19, #21, #20 (PRs #24–#29), release #22. First real api-2 provider:
+UCStudent (private repo). Still to verify on the Kobo: tap/Back through three
+levels, hold on a folder row, the subprocess deadline for `list`/`search_in`,
+UCStudent end to end.
+
 **Next:**
 - [ ] **Standard Ebooks via authenticated OPDS** (opt-in; user pastes a patron
       token in Sources). `opds.lua` parser is ready; build it as the first
