@@ -734,19 +734,21 @@ whole feature with real downloads. Deviations and findings, all deliberate:
   goes back.
 - **Saving a provider setting unchanged clears nothing.** Only a changed
   value clears that provider's folders.
-- **Only folder views stamp `dir` on their rows**, as copies, so the cache
-  stays unstamped. Every other row's directory follows from the row alone
-  and is worked out when needed, which gives the same result as a stamp. The
-  host drops a `dir` a provider sets (PROVIDERS.md §4.1).
+- **Only rows a folder lists are stamped with `dir`**: the folder view's
+  rows and the rows Download all queues, as copies, so the cache stays
+  unstamped. Every other row's directory follows from the row alone and is
+  worked out when needed, which gives the same result as a stamp. The host
+  drops a `dir` a provider sets (PROVIDERS.md §4.1).
 - **Directory segments also lose trailing dots and spaces.** KOReader's
   sanitizer reads `Notes.` as a name plus an empty extension, and vfat drops
   trailing dots anyway. A title ending in `.<ext>.` is not extended either.
 - **The target rule lives in the pure `openshelf_paths.lua`**
   (`Paths:targetIn` / `Paths:status`), so it is unit-tested.
   `Downloader.target` and `App.bookStatus` call it.
-- **A failed or cancelled download removes the directories it created and
-  left empty**, up to `OpenShelf/`, with `rmdir` only. Without this, a
-  cancelled Download all left an empty folder behind.
+- **A failed or cancelled download removes the empty directories above its
+  file**, up to `OpenShelf/`, with `rmdir` only, so it stops at the first
+  directory that holds anything. Without this, a cancelled Download all left
+  an empty folder behind.
 - **Scoped search reads the page size once**, when the results open, so one
   search keeps one page size.
 - **Download all:**
@@ -755,12 +757,20 @@ whole feature with real downloads. Deviations and findings, all deliberate:
     them the other way round.
   - The size is shown only when every file has one.
   - From the footer it adds the pages it fetched to the open view.
-  - Its listing stops at a page that adds no new row, even one that says
-    `has_more`, so a provider ignoring `page` can't make it list forever.
+  - Its listing stops at a fetched page none of whose rows was fetched
+    earlier in the same run, even one that says `has_more`, and doesn't
+    cache it, so a provider ignoring `page` can't make it list forever. Rows
+    already in the cache don't count, so a listing that shifted still goes
+    on.
+  - Besides files on the device, it skips files already queued; when
+    nothing is left it says "Nothing to download in this folder." instead
+    of confirming.
   - Cancel removes the queued files before the active one.
   - The footer shows "Listing…" while the pages load.
-  - A batch whose network drops still shows one "Download failed" dialog per
-    file, as single downloads always did; a summary is a follow-up.
+  - A batch whose network drops shows a "Download failed" dialog for every
+    file. Home shows one per failure, and a list or folder view shows a
+    second for a failed file on its current page. That is how single
+    downloads always behaved; one summary per batch is a follow-up.
 - **Download events repaint once per burst** (`ViewBase:rebuildSoon`, home
   included). Queueing or cancelling 60 files no longer repaints 60 times.
 - **`folders_demo` gained a "Show the archive" toggle** that adds an Archive

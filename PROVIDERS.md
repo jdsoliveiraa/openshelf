@@ -227,7 +227,7 @@ ctx.Entry.folder{
     subtitle = "Software Seguro",            -- optional second line
     path     = { "Software Seguro", "T" },   -- optional: the folders above this one
     count    = 43,                           -- optional: files, shown as "43 files"
-    size     = 125829120,                    -- optional: bytes, shown as "120 MB"
+    size     = 125829120,                    -- optional: bytes, shown as "120.0 MB"
     cover    = "https://…jpg",               -- optional; else a folder tile with the title
 }
 ```
@@ -580,7 +580,7 @@ Unit-test your `parse` with recorded payloads, the way the built-ins do.
 ## 11. Versioning
 
 `api` is an integer. The host accepts exactly the versions it implements
-(today: `1`; `1` and `2` from v0.8.0) and dims anything else. Adding
+(`1` and `2` since v0.8.0; only `1` before it) and dims anything else. Adding
 optional fields to the contract does **not** bump the version; changing or
 removing behaviour does. The changelog lives at the bottom of this file.
 
@@ -613,7 +613,7 @@ last like `search`, and `browse` stays the documented exception.
 - **api 1, additive** (#12, 2026-10-29) — `browse` takes an optional 4th
   argument `page` and may return `has_more` (§5.3); *See all* pages with
   *Load more*. Providers without it are single-page shelves, as before.
-- **api 2** (spec 2026-10-29, ships in v0.8.0) — api 1 + folders: `action =
+- **api 2** (spec 2026-10-29, shipped in v0.8.0) — api 1 + folders: `action =
   "folder"` rows via `ctx.Entry.folder` (§4.5), required `list` (§5.5),
   optional `root`, `search_in` (§5.6) and `dedupe`; optional `size` and
   `path` on rows, all read only from api-2 providers. A bump despite being

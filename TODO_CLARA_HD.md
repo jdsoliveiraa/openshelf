@@ -225,7 +225,7 @@ directories `OpenShelf/<provider>/<folders…>/` with a ` (2)` suffix only
 against another record's name (`openshelf_paths.lua`); scoped search
 (`search_in`); Download all (footer button, hold on a folder row). Dev kit:
 `examples/folders_demo.lua`, provider_check's folders step,
-`tools/emu-folders-check.lua` (86 checks, real downloads). Tickets #23, #17,
+`tools/emu-folders-check.lua` (the whole feature, real downloads). Tickets #23, #17,
 #18, #19, #21, #20 (PRs #24–#29), release #22. First real api-2 provider:
 UCStudent (private repo). Still to verify on the Kobo: tap/Back through three
 levels, hold on a folder row, the subprocess deadline for `list`/`search_in`,
