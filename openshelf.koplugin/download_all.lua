@@ -30,6 +30,7 @@ local T = require("ffi/util").template
 
 local App = require("app")
 local Downloader = require("downloader")
+local Entry = require("entry")
 local FolderCache = require("openshelf_foldercache")
 local Folders = require("openshelf_folders")
 local Jobs = require("jobs")
@@ -45,19 +46,33 @@ local function key(id, folder)
 end
 
 -- Every row of a folder: its cached pages, then the rest, each fetched in a
--- job and cached. A page with no rows ends it even if it says has_more.
+-- job and cached. A page that adds no row not seen yet ends it even if it
+-- says has_more (a provider that ignores `page` would list forever).
 local function load_all(id, locator, on_done, on_error)
     local cache = Folders.cache()
     local copy = cache:open(id, locator)
-    local rows = copy and copy.entries or {}
+    local rows, seen = {}, {}
+    local function add(entries)
+        local added = 0
+        for __, e in ipairs(entries) do
+            local eid = Entry.id(e)
+            if not seen[eid] then
+                seen[eid] = true
+                rows[#rows + 1] = e
+                added = added + 1
+            end
+        end
+        return added
+    end
+    add(copy and copy.entries or {})
     local page, has_more = copy and copy.pages or 0, not copy or copy.has_more
     local function step()
         if not has_more then return on_done(rows) end
         local p = page + 1
         Jobs.runPage(Folders.pageTask(id, locator, p), function(entries, more)
             cache:putPage(id, locator, p, entries, more)
-            for __, e in ipairs(entries) do rows[#rows + 1] = e end
-            page, has_more = p, more and #entries > 0
+            local added = add(entries)
+            page, has_more = p, more and added > 0
             step()
         end, on_error)
     end

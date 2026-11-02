@@ -366,15 +366,5 @@ function ListView:onDownloadEvent(event, entry, state)
     self:rebuildSoon()
 end
 
--- One repaint for a burst of download events (Download all queues a whole
--- page at once).
-function ListView:rebuildSoon()
-    if self.rebuild_soon then return end
-    self.rebuild_soon = true
-    UIManager:nextTick(function()
-        self.rebuild_soon = nil
-        if not self.closed then self:rebuild() end
-    end)
-end
 
 return ListView

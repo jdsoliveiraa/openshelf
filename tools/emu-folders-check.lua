@@ -126,6 +126,14 @@ demo.list = function(loc, limit, page, ctx)
     list_calls = list_calls + 1
     if down then return nil, "the server is down (emu check)" end
     if loc and loc.folder == "emu-empty" then return {}, false end
+    if loc and loc.folder == "emu-stuck" then   -- ignores `page`: the same 3 files, always has_more
+        local rows = {}
+        for i = 1, 3 do
+            rows[i] = ctx.Entry.new{ title = "Loop " .. i, author = "OpenShelf Check", format = "epub",
+                locator = { file = "lit101-w1-emma", stuck = i } }
+        end
+        return rows, true
+    end
     if loc and loc.folder == "emu-big" then   -- two pages: 60 files of 1000 bytes
         local first, rows = (page - 1) * limit + 1, {}
         for i = first, math.min(60, first + limit - 1) do
@@ -163,6 +171,7 @@ demo.browse = function(key, limit, ctx, page)
     if rows and page == 1 then   -- a two-page folder for Download all (#20)
         rows[#rows + 1] = ctx.Entry.folder{ title = "Big folder", count = 60, size = 60000,
             locator = { folder = "emu-big" } }
+        rows[#rows + 1] = ctx.Entry.folder{ title = "Stuck folder", locator = { folder = "emu-stuck" } }
     end
     return rows, more
 end
@@ -865,8 +874,21 @@ at(2, function()
     local ls = io.popen("cd '" .. ROOT .. "' && ls -R")
     for line in ls:lines() do log("LS2", line) end
     ls:close()
+    UIManager:close(select(2, info_text()))
     while #App.views > 1 do top():close() end
-end, "nothing to download")
+    local stuck
+    for __, e in ipairs(Browse.get("folders_demo:courses") or {}) do
+        if e.title == "Stuck folder" then stuck = e end
+    end
+    App.holdDownload(stuck, home())
+end, "hold on a folder whose provider ignores page")
+at(3, function()
+    local box = confirm_box()
+    check("a provider that ignores page ends the listing: Download 3 files? (no sizes -> the count only)",
+        box and box.text == "Download 3 files?", box and box.text)
+    check("…and the folder is not left Listing…", require("download_all").busy("folders_demo", { locator = { folder = "emu-stuck" } }) == nil)
+    if box then UIManager:close(box) end
+end, "stuck folder")
 at(1, function()
     local Library = require("library")
     local path = ROOT .. "/Folders demo/Literature 101/Week 1/Pride and Prejudice.epub"
