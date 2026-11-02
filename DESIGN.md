@@ -757,19 +757,19 @@ whole feature with real downloads. Deviations and findings, all deliberate:
     them the other way round.
   - The size is shown only when every file has one.
   - From the footer it adds the pages it fetched to the open view.
-  - Its listing stops at a fetched page none of whose rows was fetched
-    earlier in the same run, even one that says `has_more`, and doesn't
-    cache it, so a provider ignoring `page` can't make it list forever. Rows
-    already in the cache don't count, so a listing that shifted still goes
-    on.
-  - Besides files on the device, it skips files already queued; when
+  - Its listing stops at a fetched page that says `has_more` but has no
+    row this run hasn't already fetched (or no rows at all), and doesn't
+    cache that page, so a provider ignoring `page` can't make it list
+    forever. Rows already in the cache don't count, so a listing that
+    shifted still goes on.
+  - Besides files on the device, it skips files queued or downloading; when
     nothing is left it says "Nothing to download in this folder." instead
     of confirming.
   - Cancel removes the queued files before the active one.
   - The footer shows "Listing…" while the pages load.
   - A batch whose network drops shows a "Download failed" dialog for every
-    file. Home shows one per failure, and a list or folder view shows a
-    second for a failed file on its current page. That is how single
+    file. Home shows one per failure, and every list or folder view on the
+    stack adds one more when the failed file is on its current page. That is how single
     downloads always behaved; one summary per batch is a follow-up.
 - **Download events repaint once per burst** (`ViewBase:rebuildSoon`, home
   included). Queueing or cancelling 60 files no longer repaints 60 times.
