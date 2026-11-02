@@ -2190,6 +2190,130 @@ Settings.setProviderSetting("br_gated", "token", "t")
 eq(root_ids(), "br_two=Two root,br_one=One root,br_gated=Gated root", "set up -> its chip appears")
 end)()
 
+print("== Folders: offline-first cache (#18, DESIGN.md 12.6) ==")
+;(function()
+local FolderCache = require("openshelf_foldercache")
+local JSON_ = require("json")
+local function file_row(n) return Entry.new{ title = "File " .. n, locator = { file = "f" .. n } } end
+local function frows(from, to)
+    local t = {}
+    for i = from, to do t[#t + 1] = file_row(i) end
+    return t
+end
+-- A cache whose file is a JSON string held here, with a fclock we move.
+local fclock, file, saves = 1000, nil, 0
+local function fstore(cap)
+    return FolderCache.new{
+        load = function() return file and JSON_.decode(file) or nil end,
+        save = function(d) file = JSON_.encode(d); saves = saves + 1 end,
+        now = function() return fclock end,
+        cap = cap,
+    }
+end
+
+eq(FolderCache.key("ucstudent", nil), "ucstudent|", "the root's key is <id>|")
+eq(FolderCache.key("ucstudent", { folder = "lit101" }), "ucstudent|folder=lit101",
+   "a folder's key is <id>|<locator identity>")
+eq(FolderCache.key("ia", { identifier = "x" }), Entry.id{ provider = "ia", locator = { identifier = "x" } },
+   "…the Entry.id space folders and files share")
+
+local fc = fstore()
+check(fc:open("demo", nil) == nil and not fc:has("demo", nil), "a folder never listed is not cached")
+check(fc:putPage("demo", nil, 1, frows(1, 2), true), "page 1 of the root stored")
+fclock = 1100
+check(fc:putPage("demo", nil, 2, frows(3, 3), false), "page 2 follows it")
+check(not fc:putPage("demo", { folder = "x" }, 2, frows(9, 9), false), "a page 2 with no page 1 is not stored")
+check(not fc:has("demo", { folder = "x" }), "…so that folder is still uncached")
+fc:putPage("demo", { folder = "w1" }, 1, {}, false)
+
+-- Round trip through the file: every page, its has_more, its fetch time.
+local c2 = fstore()
+local copy = c2:open("demo", nil)
+eq(copy and #copy.entries, 3, "pages read back from the file in order (2 + 1 rows)")
+eq(copy.entries[3].title, "File 3", "…page 2's rows after page 1's")
+eq(copy.has_more, false, "has_more is the last page's")
+eq(copy.pages, 2, "two pages")
+eq(copy.at, 1000, "the copy is as old as its oldest page")
+eq(copy.entries[1].locator.file, "f1", "rows keep their locator")
+local empty = c2:open("demo", { folder = "w1" })
+check(empty and #empty.entries == 0 and empty.has_more == false, "an empty folder is cached too (opens offline)")
+eq(c2:open("demo", { folder = "W1" }), nil, "keys are exact: another locator is another folder")
+
+-- Page 1 again (Retry, a refresh of one page) starts the copy afresh.
+c2:putPage("demo", nil, 1, frows(5, 5), true)
+copy = c2:open("demo", nil)
+check(copy.pages == 1 and copy.entries[1].title == "File 5" and copy.has_more, "page 1 replaces the old pages")
+
+-- A refresh replaces every page with what it fetched, at one fetch time.
+fclock = 5000
+c2:putPages("demo", nil, { { entries = frows(1, 2), has_more = true }, { entries = frows(3, 4), has_more = false } })
+copy = c2:open("demo", nil)
+check(copy.pages == 2 and #copy.entries == 4 and copy.at == 5000 and copy.has_more == false,
+      "putPages replaces the copy", copy.at)
+
+-- Stale at 24 h, never expired.
+eq(FolderCache.staleDays(5000, 5000 + 86400), nil, "24 h old: not stale yet")
+eq(FolderCache.staleDays(5000, 5000 + 86401), 1, "just over 24 h -> 1 d")
+eq(FolderCache.staleDays(5000, 5000 + 3 * 86400 + 7), 3, "3 d")
+fclock = 5000 + 400 * 86400
+copy = c2:open("demo", nil)
+check(copy and #copy.entries == 4, "a copy of 400 days still opens: folders never expire")
+
+-- Opening marks a folder in memory; the next write saves the mark.
+local n_saves = saves
+c2:open("demo", { folder = "w1" })
+eq(saves, n_saves, "opening a cached folder writes nothing")
+
+-- Cap: the least recently opened go first.
+file, fclock = nil, 0
+local capped = fstore(3)
+for i = 1, 3 do fclock = i; capped:putPage("cap", { folder = i }, 1, frows(i, i), false) end
+fclock = 10; capped:open("cap", { folder = 1 })          -- folder 1 is now the most recently opened
+fclock = 11; capped:putPage("cap", { folder = 4 }, 1, frows(4, 4), false)
+check(capped:has("cap", { folder = 1 }), "the cap keeps the folder opened last")
+check(not capped:has("cap", { folder = 2 }), "…and drops the least recently opened")
+check(capped:has("cap", { folder = 3 }) and capped:has("cap", { folder = 4 }), "…keeping the others")
+local reread = fstore(3)
+check(reread:has("cap", { folder = 1 }) and not reread:has("cap", { folder = 2 }), "the eviction is saved")
+fclock = 5; capped:putPage("cap", { folder = 5 }, 1, frows(5, 5), false)   -- the clock went back
+check(capped:has("cap", { folder = 5 }), "a folder just stored is never the one evicted")
+check(not capped:has("cap", { folder = 3 }), "…the least recently opened of the others goes")
+
+-- Clear by provider: its folders only, the root included.
+file = nil
+local cl = fstore()
+cl:putPage("demo", nil, 1, frows(1, 1), false)
+cl:putPage("demo", { folder = "a" }, 1, frows(2, 2), false)
+cl:putPage("demo_two", nil, 1, frows(3, 3), false)
+cl:clearProvider("demo")
+check(not cl:has("demo", nil) and not cl:has("demo", { folder = "a" }), "clearProvider drops its folders and root")
+check(cl:has("demo_two", nil), "…not another provider's whose id starts the same")
+check(not fstore():has("demo", nil), "…and the file forgets them")
+
+-- A hand-edited file: a record without pages, a junk record or a junk page
+-- reads as never listed.
+file = '{"demo|":{"opened":1},"demo|x":"junk","demo|p":{"opened":1,"pages":["junk"]}}'
+local junk = fstore()
+check(not junk:has("demo", nil) and junk:open("demo", nil) == nil, "a record without pages reads as uncached")
+check(not junk:has("demo", { url = "x" }) and junk:open("demo", { url = "x" }) == nil, "…a junk record too")
+check(not junk:has("demo", { url = "p" }) and junk:open("demo", { url = "p" }) == nil, "…and a junk page")
+junk:putPage("demo", { folder = "ok" }, 1, frows(1, 1), false)
+check(junk:has("demo", { folder = "ok" }), "…and do not stop new pages being stored")
+
+-- Changing a provider setting clears that provider's folders (decision 77).
+local Folders = require("openshelf_folders")
+local shared = Folders.cache()
+eq(shared, Folders.cache(), "Folders.cache() is one instance")
+shared:putPage("fc_set", nil, 1, frows(1, 1), false)
+shared:putPage("fc_other", nil, 1, frows(1, 1), false)
+Settings.setProviderSetting("fc_set", "all_years", true)
+check(not shared:has("fc_set", nil), "a changed setting clears the provider's folders")
+check(shared:has("fc_other", nil), "…and no one else's")
+shared:putPage("fc_set", nil, 1, frows(1, 1), false)
+Settings.setProviderSetting("fc_set", "all_years", true)
+check(shared:has("fc_set", nil), "saving the same value again keeps them")
+end)()
+
 ---------------------------------------------------------------------------
 -- Closing a view refreshes the panel (#25): KOReader drops the refresh of a
 -- bare UIManager:close, so every OpenShelf view asks for a full-screen "ui"

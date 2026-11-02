@@ -8,12 +8,15 @@ uses secondLine and metaLine for folder rows.
   Folders.secondLine(entry, in_folder)     -> a folder row's second line ("" for none)
   Folders.metaLine(entry, label, words)    -> its meta line, "Source · 43 files · 120 MB"
   Folders.ancestors(view)                  -> the folder views it was listed from, root first
+  Folders.cache()                          -> the folder cache (openshelf_foldercache.lua) over
+                                              openshelf_folders.json in the settings dir
 
 A folder view keeps `parent`, the folder view it was listed from (nil when
 it was opened from home, search, a shelf or See all), and `folder`, the row
 it was opened from (nil for a root).
 --]]
 local Catalog = require("catalog")
+local FolderCache = require("openshelf_foldercache")
 
 local Folders = {}
 
@@ -60,6 +63,23 @@ function Folders.ancestors(view)
         v = v.parent
     end
     return chain
+end
+
+local cache
+
+--- The one folder cache, made on first use (KOReader's settings dir and the
+--- JSON file helper are only required then, so the tests load this module).
+function Folders.cache()
+    if not cache then
+        local DataStorage = require("datastorage")
+        local JsonFile = require("jsonfile")
+        local file = DataStorage:getSettingsDir() .. "/openshelf_folders.json"
+        cache = FolderCache.new{
+            load = function() return JsonFile.read(file) end,
+            save = function(d) JsonFile.write(file, d) end,
+        }
+    end
+    return cache
 end
 
 return Folders

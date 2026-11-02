@@ -144,16 +144,19 @@ end
 
 --- Open a folder view over the top screen: opts = { provider_id, title,
 --- folder = the row (nil for a root), parent = the folder view it was listed
---- from }. Asks for Wi-Fi like search: nothing is cached yet.
+--- from }. A folder listed before opens from its cached copy, online or off
+--- (DESIGN.md §12.6); one never listed asks for Wi-Fi, like search.
 function App.openFolder(opts)
-    local NetworkMgr = require("ui/network/manager")
-    NetworkMgr:runWhenOnline(function()
+    local function show()
         local FolderView = require("view_folder")
         UIManager:show(FolderView:new{
             provider_id = opts.provider_id, title = opts.title,
             folder = opts.folder, parent = opts.parent,
         })
-    end)
+    end
+    local Folders = require("openshelf_folders")
+    if Folders.cache():has(opts.provider_id, opts.folder and opts.folder.locator) then return show() end
+    require("ui/network/manager"):runWhenOnline(show)
 end
 
 --- Long-press on a book anywhere: download it straight away (DESIGN.md 8/32).

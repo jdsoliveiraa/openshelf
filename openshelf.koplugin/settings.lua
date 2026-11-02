@@ -18,6 +18,7 @@ local DataStorage = require("datastorage")
 local LuaSettings = require("luasettings")
 local Catalog = require("catalog")
 local Fields = require("openshelf_fields")
+local Folders = require("openshelf_folders")
 local Migrate = require("openshelf_migrate")
 
 local Settings = {}
@@ -174,11 +175,15 @@ function Settings.needsSetup(p)
     return Fields.missing(p.settings, Settings.providerSettings(p.id))
 end
 
+-- A changed value also clears the provider's cached folders (decision 77:
+-- UCStudent's "All years" changes the whole tree).
 function Settings.setProviderSetting(id, key, value)
     local all = s():readSetting("provider_settings") or {}
     all[id] = all[id] or {}
+    if all[id][key] == value then return end
     all[id][key] = value
     save("provider_settings", all)
+    Folders.cache():clearProvider(id)
 end
 
 -- Every ctx the catalog builds reads the saved values through here.

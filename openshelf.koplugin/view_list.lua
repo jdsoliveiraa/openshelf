@@ -10,9 +10,10 @@ job (Jobs.DEADLINE) and appends it, like search results. A failure shows in
 the toolbar (tap for the reason) and leaves Load more in place to retry.
 
 view_folder.lua builds the folder view on this list: it extends setup
-(page 1 is fetched by the view) and overrides fetchPage (its pages come from
-Catalog.list), countText, failedText, statusDetail, emptyRows and
-openEntry, adds onTitleTap, and sets in_folder.
+(its cached copy, else page 1 fetched by the view) and fetch, overrides
+fetchPage (its pages come from Catalog.list), countText, statusParts,
+loadingText, failedText, statusDetail, emptyRows and openEntry, adds
+onTitleTap, and sets in_folder.
 --]]
 local HorizontalGroup = require("ui/widget/horizontalgroup")
 local InfoMessage = require("ui/widget/infomessage")
@@ -102,10 +103,19 @@ function ListView:failedText()
     return Glyphs.warning .. " " .. _("Load more failed")
 end
 
+-- What the toolbar says before the loading / failed part.
+function ListView:statusParts()
+    return { self:countText() }
+end
+
+function ListView:loadingText()
+    return self.pager:loaded() and _("Loading more…") or _("Loading…")
+end
+
 function ListView:statusLine()
-    local parts = { self:countText() }
+    local parts = self:statusParts()
     if self.pager and self.pager.loading then
-        parts[#parts + 1] = self.pager:loaded() and _("Loading more…") or _("Loading…")
+        parts[#parts + 1] = self:loadingText()
     elseif self.pager and self.pager.err then
         parts[#parts + 1] = self:failedText()
     end
