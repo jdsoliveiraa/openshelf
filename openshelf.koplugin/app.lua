@@ -92,14 +92,13 @@ end
 function App.bookStatus(entry)
     local Entry = require("entry")
     if entry.action == Entry.ACTION.FOLDER then return { downloaded = false, missing = false } end
+    -- ✓ = a file at the entry's target (DESIGN.md §12.8): the recorded path
+    -- when there is a record, else the name a download would take now, so an
+    -- unrecorded file there counts as this entry's copy, and the twin of a
+    -- recorded same-named file (whose target gets " (2)") has none.
     local rec = App.library():find(entry)
-    local path = rec and rec.path or Downloader.targetPath(entry)
+    local path = Downloader.target(entry)
     local size = file_size(path)
-    if not size and rec and rec.path ~= Downloader.targetPath(entry) then
-        -- the record may predate a naming change; also look at the current target
-        path = Downloader.targetPath(entry)
-        size = file_size(path)
-    end
     return {
         downloaded = size ~= nil,
         path = size and path or nil,

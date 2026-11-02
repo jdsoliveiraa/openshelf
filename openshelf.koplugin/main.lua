@@ -42,6 +42,7 @@ function OpenShelf:init()
     self:onDispatcherRegisterActions()
     self.ui.menu:registerToMainMenu(self)
     Downloader.on_complete = App.recordDownload
+    Downloader.library = App.library
     -- Home mode: OpenShelf is the screen KOReader lands on at start and again
     -- every time a book is closed, so it feels like the app and the file
     -- manager becomes the escape hatch (X on the home screen reveals it).

@@ -19,7 +19,7 @@ scripts/emu.sh --template --walk tools/emu-external-check.lua --shots /tmp/shots
 for f in openshelf.koplugin/*.lua openshelf.koplugin/*/*.lua provider-openshelf-template.koplugin/*.lua examples/*.lua test/*.lua tools/*.lua; do luajit -e "assert(loadfile('$f'))"; done
 scripts/emu.sh                               # emulator, opens straight into OpenShelf
 scripts/emu.sh --walk tools/emu-walkthrough.lua --shots /tmp/shots   # scripted walkthrough + PNGs
-scripts/emu.sh --walk tools/emu-folders-check.lua --shots /tmp/shots   # folders (api 2): Browse chip, nested views, title menu, offline cache
+scripts/emu.sh --walk tools/emu-folders-check.lua --shots /tmp/shots   # folders (api 2): Browse chip, nested views, title menu, offline cache, files on disk (real downloads)
 scripts/emu.sh --no-autoopen --walk tools/emu-walkthrough-3.lua --shots /tmp/shots   # home mode (needs OPENSHELF_TEST_EPUB)
 tools/emu-update-serve.sh /tmp/osu &   # fake releases; then the self-updater check on a *copied* plugin (header of tools/emu-update-check.lua)
 OPENSHELF_UPDATE_BASE=http://127.0.0.1:8765 scripts/emu.sh --home /tmp/osu-home --copy --walk tools/emu-update-check.lua --shots /tmp/shots
@@ -98,7 +98,10 @@ proportions, fits a laptop). `--clara` gives the exact 1072×1448.
   datacenter IPs — that failure is expected off-device.
 - **DRM is a hard boundary.** Only DRM-free files are ever downloaded or opened.
 - Downloads go to `<home_dir>/OpenShelf` (`/mnt/onboard/OpenShelf` on Kobo), a
-  visible folder shared with the stock Kobo library.
+  visible folder shared with the stock Kobo library; files from folders go to
+  mirrored subdirectories, `OpenShelf/<provider name>/<folders…>/`
+  (`openshelf_paths.lua`). In the emulator `home_dir` is your `$HOME`, so
+  emulator downloads land in `~/OpenShelf`.
 
 ## Deploy
 

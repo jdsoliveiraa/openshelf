@@ -11,7 +11,13 @@
 -- ("Updated 3 d ago", nothing asked), a folder never opened asks for Wi-Fi,
 -- Refresh online repaints, a stale copy refreshes by itself while online, a
 -- failed refresh keeps the cached rows with the error in the toolbar, and
--- changing the demo's setting clears its folders. Logs CHECK lines (PASS/FAIL).
+-- changing the demo's setting clears its folders. Then files on the device
+-- (#19, §12.8): the two Pride and Prejudice files of Literature 101 and 201
+-- land in their own mirrored directories, ✓ only on the downloaded one; an
+-- "Editions" shelf's same-named pair (no path, flat) gets Name and Name (2);
+-- My books lists all four, the OpenShelf folder is listed (ls -R) and a
+-- folder file opens in the reader. Downloads are real (Project Gutenberg).
+-- Logs CHECK lines (PASS/FAIL).
 -- Run: KOREADER_SRC=… scripts/emu.sh --walk tools/emu-folders-check.lua --shots <dir>. Dev only.
 local UIManager = require("ui/uimanager")
 local Screen = require("device").screen
@@ -124,12 +130,44 @@ demo.list = function(loc, limit, page, ctx)
     end
     return rows, more
 end
-demo.shelves = { { key = "courses", title = "Courses" } }
-demo.browse = function(_key, limit, ctx, page) return demo_list(nil, limit, page, ctx) end
+demo.shelves = { { key = "courses", title = "Courses" }, { key = "editions", title = "Editions" } }
+demo.browse = function(key, limit, ctx, page)
+    if key == "editions" then   -- two same-named files, no path: both flat
+        local function edition(file, gutenberg)
+            return ctx.Entry.new{ title = "Pride and Prejudice", author = "Jane Austen", format = "epub",
+                cover = ("https://www.gutenberg.org/cache/epub/%d/pg%d.cover.medium.jpg"):format(gutenberg, gutenberg),
+                locator = { file = file, shelf = "editions" } }
+        end
+        return { edition("lit101-w1-pp", 1342), edition("lit201-w1-pp", 42671) }, false
+    end
+    return demo_list(nil, limit, page, ctx)
+end
 check("demo registers", Catalog.register(demo) == true, table.concat(Catalog.ids(), ","))
 set_builtins(false)
 Settings.setProviderSetting("folders_demo", "archive", nil)
 Folders.cache():clearProvider("folders_demo")   -- every run starts with nothing cached
+
+-- Every run starts with none of the demo's files (#19): its recorded files
+-- go, then the directories they leave empty (rmdir never removes anything else).
+local ROOT = Downloader.dirPath()
+local function demo_records()
+    local t = {}
+    for __, r in ipairs(App.library():all()) do
+        if r.provider == "folders_demo" then t[#t + 1] = r end
+    end
+    return t
+end
+local function remove_demo_files()
+    local lfs = require("libs/libkoreader-lfs")
+    for __, r in ipairs(demo_records()) do
+        App.removeFromLibrary(r)
+        if r.path then os.remove(r.path) end
+    end
+    for __, d in ipairs({ "Literature 101/Week 1", "Literature 101", "Literature 201/Week 1", "Literature 201", "" }) do
+        lfs.rmdir(ROOT .. "/Folders demo" .. (d ~= "" and ("/" .. d) or ""))
+    end
+end
+remove_demo_files()
 
 -- Wi-Fi faked off: NetworkMgr says so, and asking to turn it on is counted
 -- (the callback never runs, as when the user says no).
@@ -289,11 +327,17 @@ at(2, function() shot("search-folder-grid"); home():toggleView(); home():goHome(
 -- 9. a folder tile on the shelf
 at(2, function()
     shot("home-folder-shelf")
-    local tiles = {}
+    -- cover tiles by row, top to bottom: My books (when it has books), then Courses
+    local rows, ys = {}, {}
     for __, hit in ipairs(home().hits) do
-        if hit.w == Shelf.geometry(home()).cover_w then tiles[#tiles + 1] = hit end
+        if hit.w == Shelf.geometry(home()).cover_w then
+            if not rows[hit.y] then rows[hit.y] = {}; ys[#ys + 1] = hit.y end
+            table.insert(rows[hit.y], hit)
+        end
     end
-    tap(home(), tiles[2])   -- Literature 201
+    table.sort(ys)
+    local courses = rows[ys[App.library():count() > 0 and 2 or 1]]
+    tap(home(), courses[2])   -- Literature 201
 end, "tap a shelf tile")
 at(2, function()
     check("shelf tile opens its folder", top().title == "Literature 201" and #Folders.ancestors(top()) == 0, top().title)
@@ -403,5 +447,104 @@ at(2, function()
     v:close()
     Settings.setProviderSetting("folders_demo", "archive", nil)
 end, "archive")
+-- 11. files on the device (#19): mirrored directories, names, (2), ✓, My books
+local PP = "Pride and Prejudice"
+local function downloaded_to(entry, path)
+    local st = App.bookStatus(entry)
+    return st.downloaded and st.path == path, st.path
+end
+at(1, function()
+    check("no demo file on the device yet", #demo_records() == 0, #demo_records())
+    open_chip()
+end, "open the root")
+at(2, function() top():openEntry(row_named("Literature 101")) end, "Literature 101")
+at(2, function() top():openEntry(row_named("Week 1")) end, "Week 1")
+at(2, function()
+    local pp = row_named(PP)
+    check("a listed file is stamped with its folder's directory", pp.dir == "Folders demo/Literature 101/Week 1", pp.dir)
+    check("not on the device yet", not App.bookStatus(pp).downloaded)
+    Downloader.enqueue(pp)
+end, "download Literature 101's Pride and Prejudice")
+at(5, function()
+    local ok, got = downloaded_to(row_named(PP), ROOT .. "/Folders demo/Literature 101/Week 1/Pride and Prejudice.epub")
+    check("it lands in Folders demo/Literature 101/Week 1/Pride and Prejudice.epub", ok, got)
+    shot("lit101-week1-downloaded")
+    top():close()
+    top():close()
+    top():openEntry(row_named("Literature 201"))
+end, "Literature 201")
+at(2, function() top():openEntry(row_named("Week 1")) end, "Literature 201 Week 1")
+at(2, function()
+    local pp = row_named(PP)
+    check("its same-named twin in Literature 201 shows no ✓", not App.bookStatus(pp).downloaded,
+        App.bookStatus(pp).path)
+    shot("lit201-week1-twin-not-downloaded")
+    Downloader.enqueue(pp)
+end, "download Literature 201's")
+at(5, function()
+    local ok, got = downloaded_to(row_named(PP), ROOT .. "/Folders demo/Literature 201/Week 1/Pride and Prejudice.epub")
+    check("…and lands in its own directory", ok, got)
+    shot("lit201-week1-downloaded")
+    while #App.views > 1 do top():close() end
+end, "back home")
+-- the flat pair from the Editions shelf
+local function editions() return Browse.get("folders_demo:editions") or {} end
+at(1, function()
+    local ed = editions()
+    check("the Editions shelf has the same-named pair", #ed == 2 and ed[1].title == PP and ed[2].title == PP, #ed)
+    check("no path, not listed -> flat", Downloader.paths:dirFor(ed[1]) == "", Downloader.paths:dirFor(ed[1]))
+    Downloader.enqueue(ed[1])
+end, "download the first edition")
+at(5, function()
+    local ed = editions()
+    local ok, got = downloaded_to(ed[1], ROOT .. "/Jane Austen - Pride and Prejudice.epub")
+    check("the first lands flat as Jane Austen - Pride and Prejudice.epub", ok, got)
+    check("the other shows no ✓: its target is (2)", not App.bookStatus(ed[2]).downloaded
+        and Downloader.target(ed[2]) == ROOT .. "/Jane Austen - Pride and Prejudice (2).epub", Downloader.target(ed[2]))
+    home():rebuild()
+    Downloader.enqueue(ed[2])
+end, "download the second edition")
+at(5, function()
+    local ok, got = downloaded_to(editions()[2], ROOT .. "/Jane Austen - Pride and Prejudice (2).epub")
+    check("the second gets Jane Austen - Pride and Prejudice (2).epub", ok, got)
+    check("…and the first keeps its own", (downloaded_to(editions()[1], ROOT .. "/Jane Austen - Pride and Prejudice.epub")))
+    home():rebuild()
+end, "both editions")
+at(2, function() shot("home-editions-downloaded"); home():openMyBooks() end, "My books")
+at(2, function()
+    local recs = demo_records()
+    local all_there = #recs == 4
+    for __, r in ipairs(recs) do
+        log("RECORD", r.title, r.path)
+        all_there = all_there and (require("libs/libkoreader-lfs").attributes(r.path, "size") or 0) > 0
+    end
+    local listed = 0
+    for __, list in pairs(top():buckets()) do
+        for ___, e in ipairs(list) do
+            if e.provider == "folders_demo" then listed = listed + 1 end
+        end
+    end
+    check("My books records all four, each file on disk", all_there, #recs)
+    check("…and lists them", listed == 4, listed)
+    shot("mybooks")
+    local ls = io.popen("cd '" .. ROOT .. "' && ls -R")
+    for line in ls:lines() do log("LS", line) end
+    ls:close()
+end, "My books")
+at(1, function()
+    local Library = require("library")
+    local path = ROOT .. "/Folders demo/Literature 101/Week 1/Pride and Prejudice.epub"
+    local rec = App.library():findByPath(path)
+    local st = rec and App.bookStatus(Library.toEntry(rec))
+    check("the record's entry finds its file", st and st.path == path, st and st.path)
+    set_builtins(true)
+    App.openBook(st.path)
+end, "open a folder file")
+at(5, function()
+    local reader = require("apps/reader/readerui").instance
+    local file = reader and reader.document and reader.document.file
+    check("it opens in the reader", file == ROOT .. "/Folders demo/Literature 101/Week 1/Pride and Prejudice.epub", file)
+    shot("reader-folder-file")
+end, "reader")
 at(1, function() set_builtins(true); log("done"); os.exit(0) end, "exit")
 run(1)

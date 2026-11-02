@@ -2275,7 +2275,7 @@ check(not capped:has("cap", { folder = 2 }), "…and drops the least recently op
 check(capped:has("cap", { folder = 3 }) and capped:has("cap", { folder = 4 }), "…keeping the others")
 local reread = fstore(3)
 check(reread:has("cap", { folder = 1 }) and not reread:has("cap", { folder = 2 }), "the eviction is saved")
-fclock = 5; capped:putPage("cap", { folder = 5 }, 1, frows(5, 5), false)   -- the clock went back
+fclock = 2; capped:putPage("cap", { folder = 5 }, 1, frows(5, 5), false)   -- the clock went back past every other
 check(capped:has("cap", { folder = 5 }), "a folder just stored is never the one evicted")
 check(not capped:has("cap", { folder = 3 }), "…the least recently opened of the others goes")
 
@@ -2312,6 +2312,129 @@ check(shared:has("fc_other", nil), "…and no one else's")
 shared:putPage("fc_set", nil, 1, frows(1, 1), false)
 Settings.setProviderSetting("fc_set", "all_years", true)
 check(shared:has("fc_set", nil), "saving the same value again keeps them")
+end)()
+
+print("== Folders: directories, names, targets (#19, DESIGN.md 12.8) ==")
+;(function()
+local Paths = require("openshelf_paths")
+-- KOReader's util.getSafeFilename(str, nil, limit) without the HTML step:
+-- vfat's invalid characters -> _, trailing dots and spaces dropped, the
+-- name (not its extension of <= 10 bytes) cut to `limit` bytes, a UTF-8
+-- sequence split by the cut dropped.
+local function safe(str, _path, limit)
+    local name, suffix = str, nil
+    if str:find("%.") then name, suffix = str:match("(.*)%.(.*)") end
+    if suffix and #suffix > 10 then name, suffix = str, nil end
+    name = name:gsub("\r?\n", " "):gsub("\t", " "):sub(1, limit or 240)
+    name = name:gsub("[\192-\255][\128-\191]*$", function(seq)
+        local n = seq:byte(1) >= 240 and 4 or seq:byte(1) >= 224 and 3 or 2
+        return #seq == n and seq or ""
+    end)
+    local function repl(x) return (x:gsub('[\\/:*?"<>|]', "_"):gsub("[.%s]+$", "")) end
+    if suffix and suffix ~= "" then return repl(name) .. "." .. repl(suffix) end
+    return repl(name)
+end
+local paths = Paths.new(safe)
+local function file(over)
+    local fe = Entry.new{ title = over.title or "Aula 1", author = over.author, format = over.format or "pdf",
+        locator = { file = over.id or "a1" }, path = over.path }
+    fe.provider, fe.source = "ucs", "UCStudent"
+    return fe
+end
+local function folder(over)
+    local fe = Entry.folder{ title = over.title or "T", locator = { folder = over.id or "t" }, path = over.path }
+    fe.provider, fe.source = "ucs", "UCStudent"
+    return fe
+end
+
+-- Folder directories (relative to OpenShelf/).
+eq(paths:rootDir("UCStudent"), "UCStudent", "the root's directory is P (its title is never a segment)")
+eq(paths:dirOf(folder{ title = "T", path = { "Software Seguro" } }), "UCStudent/Software Seguro/T",
+   "a folder row with path -> P/<path…>/<title>")
+eq(paths:dirOf(folder{ title = "Top", path = {} }), "UCStudent/Top", "an empty path: directly under the root")
+eq(paths:dirOf(folder{ title = "Lab01" }, "UCStudent/Software Seguro/T"), "UCStudent/Software Seguro/T/Lab01",
+   "a folder list() returned, without path -> the listing folder's directory/<title>")
+local found = folder{ title = "Gothic", path = { "Literature 201", "Seminar" } }
+local below = paths:dirOf(folder{ title = "Week 3" }, paths:dirOf(found))
+eq(below, "UCStudent/Literature 201/Seminar/Gothic/Week 3",
+   "recursive below a search-found folder with path")
+eq(paths:dirOf(folder{ title = "Gothic" }), "UCStudent/Gothic",
+   "a search / shelf / scoped-search folder without path -> P/<title>")
+
+-- Files without a record: their path > the listing folder's directory > flat.
+eq(paths:dirOf(file{ path = { "SS", "T" } }, "UCStudent/Elsewhere"), "UCStudent/SS/T",
+   "a file's own path wins over the folder that listed_rows it")
+eq(paths:dirOf(file{}, "UCStudent/SS/T"), "UCStudent/SS/T", "else the listing folder's directory")
+eq(paths:dirOf(file{}), "", "else flat (search, shelf, scoped search)")
+eq(paths:dirOf(file{ path = {} }), "UCStudent", "a file with an empty path: P")
+
+-- Segments are made safe; one that ends up empty is _.
+eq(paths:dirOf(folder{ title = "..", path = { ".", "A/B: c?" } }), "UCStudent/_/A_B_ c_/_",
+   "./.. segments -> _, invalid characters -> _")
+eq(paths:segment("Notes. "), "Notes", "trailing dots and spaces dropped, like file names")
+local long = string.rep("é", 70)   -- 140 bytes
+local cut = paths:segment(long)
+check(#cut <= 120 and cut == string.rep("é", 60), "a long segment is cut at 120 bytes on a UTF-8 boundary", #cut)
+
+-- Stamps: copies, so caches keep rows unstamped.
+local listed_rows = { file{ id = "x" }, folder{ title = "Sub", id = "s" } }
+local shown = paths:stamped(listed_rows, "UCStudent/T")
+eq(shown[1].dir, "UCStudent/T", "a listed_rows file is stamped with the folder's directory")
+eq(shown[2].dir, "UCStudent/T/Sub", "a listed_rows folder row is stamped too")
+eq(listed_rows[1].dir, nil, "the rows themselves stay unstamped")
+eq(paths:dirFor(shown[2]), "UCStudent/T/Sub", "dirFor reads the stamp")
+eq(paths:dirFor(folder{ title = "Sub" }), "UCStudent/Sub", "…else works it out from the row alone")
+
+-- Names.
+eq(paths:fileName(file{ title = "Aula 1" }, true), "Aula 1.pdf", "<Title>.<ext> inside a directory")
+eq(paths:fileName(file{ title = "Aula 1.pdf" }, true), "Aula 1.pdf", "no doubled extension")
+eq(paths:fileName(file{ title = "Aula 1.PDF" }, true), "Aula 1.PDF", "…in any case")
+eq(paths:fileName(file{ title = "Aula 1", author = "Ana" }, false), "Ana - Aula 1.pdf", "<Author> - <Title>.<ext> flat")
+eq(paths:fileName(file{ title = "Aula 1.pdf", author = "Ana" }, false), "Ana - Aula 1.pdf", "…no doubled extension flat either")
+eq(paths:fileName(file{ title = "Aula 1" }, false), "Unknown - Aula 1.pdf", "flat without an author, as before")
+eq(paths:fileName(file{ title = "..." }, true), "_.pdf", "an empty base name -> _")
+eq(Paths.withSuffix("Aula 1.pdf", 2), "Aula 1 (2).pdf", "the suffix goes before .<ext>")
+eq(Paths.withSuffix("README", 3), "README (3)", "…or at the end without one")
+local long_name = paths:fileName(file{ title = string.rep("x", 200) }, true)
+eq(Paths.withSuffix(long_name, 2), string.rep("x", 120) .. " (2).pdf", "…after the 120-byte cut")
+
+-- Targets of entries without a record.
+local root = "/mnt/onboard/OpenShelf"
+local trow = paths:stamped({ file{ title = "Aula 1" } }, "UCStudent/SS/T")[1]
+eq(paths:target(trow, root, {}), root .. "/UCStudent/SS/T/Aula 1.pdf", "target = root/<directory>/<name>")
+eq(paths:target(trow, root, { [(root .. "/UCStudent/SS/T/Aula 1.pdf"):lower()] = true }),
+   root .. "/UCStudent/SS/T/Aula 1 (2).pdf", "another record owns the name -> (2)")
+eq(paths:target(trow, root, { [(root .. "/UCStudent/SS/T/aula 1.PDF"):lower()] = true,
+                            [(root .. "/UCStudent/SS/T/Aula 1 (2).pdf"):lower()] = true }),
+   root .. "/UCStudent/SS/T/Aula 1 (3).pdf", "ownership is case-insensitive (vfat), then (3)")
+eq(paths:target(file{ title = "Emma", author = "Jane Austen", format = "epub" }, root, {}),
+   root .. "/Jane Austen - Emma.epub", "a flat target")
+-- A built-in's flat download keeps today's name: "%s - %s.%s" through the same sanitizer.
+local builtin = Entry.new{ title = "Pride and Prejudice: A Novel", author = "Austen, Jane", format = "epub",
+    locator = { url = "https://g/1342" } }
+builtin.provider, builtin.source = "gutendex", "Project Gutenberg"
+eq(paths:target(builtin, root, {}),
+   root .. "/" .. safe(string.format("%s - %s.%s", builtin.author, builtin.title, builtin.format), nil, 120),
+   "built-in flat names unchanged")
+
+-- My books records folder files like books, with the full path; the entry's
+-- own `path` (folder titles) and `dir` stamp never reach the record.
+local lib_store
+local flib = Library.new{ load = function() return lib_store end, save = function(d) lib_store = d end }
+local aula = paths:stamped({ file{ title = "Aula 1", id = "a1", path = { "SS", "T" } } }, "UCStudent/X")[1]
+local full = root .. "/UCStudent/SS/T/Aula 1.pdf"
+local arec = flib:add(aula, full)
+eq(arec.path, full, "the record keeps the file's full path, folder directory included")
+eq(Library.toEntry(arec).path, nil, "toEntry gives no folder path back (a record's path is a file)")
+eq(Library.toEntry(arec).dir, nil, "…and no directory stamp")
+local twin = file{ title = "Aula 1", id = "a1-twin", path = { "SS", "T" } }
+local owned = flib:ownedPaths(Entry.id(twin))
+check(owned[full:lower()], "ownedPaths: other records' paths, lower-cased")
+eq(paths:target(twin, root, owned), root .. "/UCStudent/SS/T/Aula 1 (2).pdf",
+   "the never-downloaded twin of a recorded same-named file gets (2), so it shows no ✓")
+eq(flib:ownedPaths(Entry.id(aula))[full:lower()], nil, "an entry's own record never owns its name against it")
+eq(paths:target(file{ title = "Aula 2", id = "a2", path = { "SS", "T" } }, root, owned),
+   root .. "/UCStudent/SS/T/Aula 2.pdf", "suffix only against another record's path: a free name stays")
 end)()
 
 ---------------------------------------------------------------------------
