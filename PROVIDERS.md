@@ -4,11 +4,10 @@
 > `DESIGN.md` §9 (decisions 37–57, grilled 2026-10-26). Status: **implemented**
 > as of v0.6.0 — the built-ins and the host both use api 1.
 > **api 2** = api 1 + folders (§4.5, §5.5, §5.6; `DESIGN.md` §12, decisions
-> 68–86, grilled 2026-10-29). Status: **being built**; it ships in v0.8.0
-> (all of it is on `main`: the catalog side, the dev kit, the folder views,
-> home's Browse chips, the offline folder cache, folder directories on disk,
-> scoped search and Download all; not released yet). Released hosts before v0.8.0
-> reject `api = 2`.
+> 68–86, grilled 2026-10-29). Status: **implemented** as of v0.8.0: folder
+> views, home's Browse chips, the offline folder cache, folder directories on
+> disk, scoped search and Download all, plus the dev kit (`folders_demo.lua`,
+> provider_check's folders step). Hosts before v0.8.0 reject `api = 2`.
 
 A **provider** turns one catalog into OpenShelf search results and download
 URLs. Project Gutenberg, Internet Archive and DOAB are providers; so is
@@ -228,7 +227,7 @@ ctx.Entry.folder{
     subtitle = "Software Seguro",            -- optional second line
     path     = { "Software Seguro", "T" },   -- optional: the folders above this one
     count    = 43,                           -- optional: files, shown as "43 files"
-    size     = 125829120,                    -- optional: bytes, shown as "120 MB"
+    size     = 125829120,                    -- optional: bytes, shown as "120.0 MB"
     cover    = "https://…jpg",               -- optional; else a folder tile with the title
 }
 ```
@@ -581,7 +580,7 @@ Unit-test your `parse` with recorded payloads, the way the built-ins do.
 ## 11. Versioning
 
 `api` is an integer. The host accepts exactly the versions it implements
-(today: `1`; `1` and `2` from v0.8.0) and dims anything else. Adding
+(`1` and `2` since v0.8.0; only `1` before it) and dims anything else. Adding
 optional fields to the contract does **not** bump the version; changing or
 removing behaviour does. The changelog lives at the bottom of this file.
 
@@ -614,7 +613,7 @@ last like `search`, and `browse` stays the documented exception.
 - **api 1, additive** (#12, 2026-10-29) — `browse` takes an optional 4th
   argument `page` and may return `has_more` (§5.3); *See all* pages with
   *Load more*. Providers without it are single-page shelves, as before.
-- **api 2** (spec 2026-10-29, ships in v0.8.0) — api 1 + folders: `action =
+- **api 2** (spec 2026-10-29, shipped in v0.8.0) — api 1 + folders: `action =
   "folder"` rows via `ctx.Entry.folder` (§4.5), required `list` (§5.5),
   optional `root`, `search_in` (§5.6) and `dedupe`; optional `size` and
   `path` on rows, all read only from api-2 providers. A bump despite being

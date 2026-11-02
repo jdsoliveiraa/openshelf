@@ -35,7 +35,7 @@ that). Feedbooks discontinued its free public-domain OPDS.
 > OpenShelf never touches Adobe-DRM'd books (library/purchase). Those stay in
 > the stock Kobo reader.
 
-## Screens (v0.5)
+## Screens
 
 The full design record with every decision is in [DESIGN.md](DESIGN.md).
 
@@ -55,6 +55,12 @@ The full design record with every decision is in [DESIGN.md](DESIGN.md).
   outside OpenShelf stay listed, dimmed, with *Download again*; hold to remove.
 - **Settings** — sources, default view, results per source, clear recents,
   home mode, About.
+- **Folders** (v0.8.0, for providers that have them: `PROVIDERS.md` api 2) — a
+  *Browse* chip on home opens a provider's top folder; each folder is its own
+  view (Back = up one level, tap the title for the folders above and
+  Refresh), **Download all** (also: hold on a folder row), and a search
+  inside it when the provider offers one. Folders you opened stay available
+  offline.
 - **Home mode** — OpenShelf opens when KOReader starts and again after every
   book, so it behaves like the app; X on the home screen shows KOReader's file
   manager underneath. Off by default (gear → Home mode).
@@ -65,7 +71,10 @@ Downloaded books are also added to a KOReader **Collection** named "OpenShelf".
 
 `OpenShelf/` at the root of the device (`/mnt/onboard/OpenShelf` on Kobo), a
 visible folder, so books show in the stock Kobo library as well as in KOReader.
-Files are named `Author - Title.epub` (or `.pdf`).
+Files are named `Author - Title.epub` (or `.pdf`). Files from a provider's
+folders mirror them: `OpenShelf/<provider>/<folder>/<subfolder>/Title.epub`.
+When another file OpenShelf downloaded already has that name, the new one
+gets ` (2)` (then ` (3)`, …).
 
 ## Architecture
 
