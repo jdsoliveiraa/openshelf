@@ -70,14 +70,20 @@ function FolderCache:_folder(id, locator)
     self:_ensure()
     local f = self.data[FolderCache.key(id, locator)]
     if type(f) ~= "table" or type(f.pages) ~= "table" or #f.pages == 0 then return nil end
+    for __, p in ipairs(f.pages) do
+        if type(p) ~= "table" then return nil end
+    end
     return f
 end
 
--- Drop the least recently opened folders until at most `cap` are left.
-function FolderCache:_evict()
+-- Drop the least recently opened folders until at most `cap` are left,
+-- never `keep` (the folder just stored, even when the clock went back).
+function FolderCache:_evict(keep)
     local keys = {}
-    for k in pairs(self.data) do keys[#keys + 1] = k end
-    if #keys <= self.cap then return end
+    for k in pairs(self.data) do
+        if k ~= keep then keys[#keys + 1] = k end
+    end
+    if #keys < self.cap then return end
     local function opened(k)
         local f = self.data[k]
         return type(f) == "table" and tonumber(f.opened) or 0
@@ -87,12 +93,13 @@ function FolderCache:_evict()
         if oa ~= ob then return oa < ob end
         return a < b
     end)
-    for i = 1, #keys - self.cap do self.data[keys[i]] = nil end
+    for i = 1, #keys - self.cap + 1 do self.data[keys[i]] = nil end
 end
 
 function FolderCache:_store(id, locator, pages)
-    self.data[FolderCache.key(id, locator)] = { opened = self._now(), pages = pages }
-    self:_evict()
+    local key = FolderCache.key(id, locator)
+    self.data[key] = { opened = self._now(), pages = pages }
+    self:_evict(key)
     self._save(self.data)
 end
 

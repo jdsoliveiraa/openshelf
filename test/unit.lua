@@ -2275,6 +2275,9 @@ check(not capped:has("cap", { folder = 2 }), "…and drops the least recently op
 check(capped:has("cap", { folder = 3 }) and capped:has("cap", { folder = 4 }), "…keeping the others")
 local reread = fstore(3)
 check(reread:has("cap", { folder = 1 }) and not reread:has("cap", { folder = 2 }), "the eviction is saved")
+fclock = 5; capped:putPage("cap", { folder = 5 }, 1, frows(5, 5), false)   -- the clock went back
+check(capped:has("cap", { folder = 5 }), "a folder just stored is never the one evicted")
+check(not capped:has("cap", { folder = 3 }), "…the least recently opened of the others goes")
 
 -- Clear by provider: its folders only, the root included.
 file = nil
@@ -2287,10 +2290,13 @@ check(not cl:has("demo", nil) and not cl:has("demo", { folder = "a" }), "clearPr
 check(cl:has("demo_two", nil), "…not another provider's whose id starts the same")
 check(not fstore():has("demo", nil), "…and the file forgets them")
 
--- A hand-edited file: a record without pages reads as never listed.
-file = '{"demo|":{"opened":1},"demo|x":"junk"}'
+-- A hand-edited file: a record without pages, a junk record or a junk page
+-- reads as never listed.
+file = '{"demo|":{"opened":1},"demo|x":"junk","demo|p":{"opened":1,"pages":["junk"]}}'
 local junk = fstore()
-check(not junk:has("demo", nil) and junk:open("demo", { x = 1 }) == nil, "malformed records read as uncached")
+check(not junk:has("demo", nil) and junk:open("demo", nil) == nil, "a record without pages reads as uncached")
+check(not junk:has("demo", { url = "x" }) and junk:open("demo", { url = "x" }) == nil, "…a junk record too")
+check(not junk:has("demo", { url = "p" }) and junk:open("demo", { url = "p" }) == nil, "…and a junk page")
 junk:putPage("demo", { folder = "ok" }, 1, frows(1, 1), false)
 check(junk:has("demo", { folder = "ok" }), "…and do not stop new pages being stored")
 

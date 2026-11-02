@@ -329,7 +329,8 @@ at(2, function()
     local v = top()
     check("offline: two levels down from the cache",
         v.title == "Week 1" and #v.entries == 2 and list_calls == 0
-            and titles(Folders.ancestors(v)) == "Demo courses > Literature 101", v:statusLine())
+            and titles(Folders.ancestors(v)) == "Demo courses > Literature 101"
+            and v:statusLine():find("Updated 3 d ago", 1, true) ~= nil, v:statusLine())
     shot("offline-week1-from-cache")
     v:close()
 end, "offline Week 1")
