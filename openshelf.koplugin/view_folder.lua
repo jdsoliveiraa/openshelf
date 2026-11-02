@@ -19,8 +19,9 @@ Title = folder name; a tap on it lists the folder views this one was listed
 from (root first, nearest last; picking one closes every view above it),
 then Refresh, which forces that refetch. Back / chevron = up one level (the
 list's on_left closes the view), X = leave OpenShelf. Toolbar `N items ·
-Updated 3 d ago · ⚠ failed` (tap for the reason) and list/grid; no filter, a
-folder has one source. Empty → "This folder is empty."; a failed first page
+Updated 3 d ago · ⚠ failed` (tap for the reason), a search glyph when the
+provider has search_in (the stock input dialog, then view_search_in.lua),
+and list/grid; no filter, a folder has one source. Empty → "This folder is empty."; a failed first page
 → the provider's reason (PROVIDERS.md §5.5) under "Could not open this
 folder." and Retry; a failed refresh keeps the cached rows and shows in the
 toolbar.
@@ -36,10 +37,9 @@ unstamped, since the same folder reached another way may get another
 directory.
 --]]
 local ButtonDialog = require("ui/widget/buttondialog")
+local InputDialog = require("ui/widget/inputdialog")
 local NetworkMgr = require("ui/network/manager")
 local UIManager = require("ui/uimanager")
-local Size = require("ui/size")
-local Screen = require("device").screen
 local _ = require("gettext")
 local N_ = _.ngettext
 local T = require("ffi/util").template
@@ -53,7 +53,6 @@ local Glyphs = require("glyphs")
 local Jobs = require("jobs")
 local ListView = require("view_list")
 local ShelfPager = require("shelf_pager")
-local P = require("uiparts")
 
 local FolderView = ListView:extend{
     provider_id = nil,
@@ -175,30 +174,55 @@ function FolderView:statusDetail(err)
     return T(_("Could not load more of this folder:\n%1\n\nTap Load more to try again."), err)
 end
 
-function FolderView:emptyRows()
-    local w, pad = self.screen_w, Size.padding.default
-    local h = Screen:scaleBySize(60)
-    local function line(text)
-        return {
-            widget = P.row(w, h, P.text(text, 15, { color = P.DARK_GRAY, max_width = w - 2 * pad })),
-            h = h, hits = {},
-        }
+function FolderView:emptyText()
+    return _("This folder is empty.")
+end
+
+function FolderView:failedMessage()
+    return _("Could not open this folder.")
+end
+
+-- A search glyph before list/grid when the provider can search in folders.
+function FolderView:toolbarButtons()
+    local buttons = ListView.toolbarButtons(self)
+    local p = Catalog.byId(self.provider_id)
+    if p and type(p.search_in) == "function" then
+        table.insert(buttons, 1, { glyph = Glyphs.search, on_tap = function() self:openSearch() end })
     end
-    if self.pager:loaded() then return { line(_("This folder is empty.")) } end
-    if not self.pager.err then return { line(_("Loading…")) } end
-    local reason = P.textBox(self.pager.err, 14, w - 2 * pad, Screen:scaleBySize(66), { color = P.DARK_GRAY })
-    local reason_h = reason:getSize().h + pad
-    local bw, bh = Screen:scaleBySize(120), Screen:scaleBySize(36)
-    local bh_row = bh + 2 * pad
-    return {
-        line(_("Could not open this folder.")),
-        { widget = P.row(w, reason_h, reason), h = reason_h, hits = {} },
-        {
-            widget = P.row(w, bh_row, P.button(_("Retry"), bw, bh, { size = 15 }), { align = "center" }),
-            h = bh_row,
-            hits = { { x = math.floor((w - bw) / 2), w = bw, on_tap = function() self:loadMore() end } },
-        },
+    return buttons
+end
+
+-- The search glyph: the stock input dialog, then the results view.
+function FolderView:openSearch()
+    local dialog
+    dialog = InputDialog:new{
+        title = T(_("Search in %1"), self.title),
+        input_hint = _("Title, author, keyword…"),
+        buttons = {{
+            {
+                text = _("Cancel"),
+                id = "close",
+                callback = function() UIManager:close(dialog) end,
+            },
+            {
+                text = _("Search"),
+                id = "search",
+                is_enter_default = true,
+                callback = function()
+                    local q = (dialog:getInputText() or ""):gsub("^%s+", ""):gsub("%s+$", "")
+                    UIManager:close(dialog)
+                    if q ~= "" then self:searchIn(q) end
+                end,
+            },
+        }},
     }
+    UIManager:show(dialog)
+    dialog:onShowKeyboard()
+end
+
+--- Search this folder and everything below it for `query`.
+function FolderView:searchIn(query)
+    App.openSearchIn{ provider_id = self.provider_id, folder = self.folder, folder_title = self.title, query = query }
 end
 
 -- Rows listed here open their folders on top, with this view as their parent.

@@ -153,6 +153,21 @@ function App.openFolder(opts)
     require("ui/network/manager"):runWhenOnline(show)
 end
 
+--- Scoped search results over the top screen (DESIGN.md §12.7): opts = {
+--- provider_id, folder = the row searched (nil for a root), folder_title,
+--- query }. Needs Wi-Fi, like search; never cached.
+function App.openSearchIn(opts)
+    local _ = require("gettext")
+    local T = require("ffi/util").template
+    require("ui/network/manager"):runWhenOnline(function()
+        local SearchInView = require("view_search_in")
+        UIManager:show(SearchInView:new{
+            provider_id = opts.provider_id, folder = opts.folder, query = opts.query,
+            title = T(_("“%1” in %2"), opts.query, opts.folder_title or ""),
+        })
+    end)
+end
+
 --- Long-press on a book anywhere: download it straight away (DESIGN.md 8/32).
 function App.holdDownload(entry, view)
     local InfoMessage = require("ui/widget/infomessage")
