@@ -587,7 +587,7 @@ function HomeView:onDownloadEvent(event, entry, state)
             text = T(_("Download failed: %1\n\n%2"), entry.title or "", state and state.err or ""),
         })
     end
-    self:rebuild()
+    self:rebuildSoon()
 end
 
 return HomeView

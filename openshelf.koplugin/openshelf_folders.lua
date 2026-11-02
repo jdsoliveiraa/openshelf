@@ -10,6 +10,7 @@ uses secondLine and metaLine for folder rows.
   Folders.secondLine(entry, in_folder)     -> a folder row's second line ("" for none)
   Folders.metaLine(entry, label, words)    -> its meta line, "Source · 43 files · 120 MB"
   Folders.ancestors(view)                  -> the folder views it was listed from, root first
+  Folders.downloadable(entries, on_device) -> what Download all queues, and its summed size
   Folders.cache()                          -> the folder cache (openshelf_foldercache.lua) over
                                               openshelf_folders.json in the settings dir
 
@@ -18,6 +19,7 @@ it was opened from home, search, a shelf or See all), and `folder`, the row
 it was opened from (nil for a root).
 --]]
 local Catalog = require("catalog")
+local Entry = require("entry")
 local FolderCache = require("openshelf_foldercache")
 
 local Folders = {}
@@ -77,6 +79,25 @@ function Folders.ancestors(view)
         v = v.parent
     end
     return chain
+end
+
+--- What Download all queues from a folder's rows (DESIGN.md §12.8, decision
+--- 82): the files directly in it (not its subfolders, no buy rows), each
+--- once, without those on_device(row) says are there or on their way.
+--- Returns the rows and their summed size, nil when a row has no `size`
+--- (the confirm then gives the count only) or nothing is left.
+function Folders.downloadable(entries, on_device)
+    local picked, seen, size = {}, {}, 0
+    for __, e in ipairs(entries) do
+        local id = Entry.id(e)
+        if e.action ~= Entry.ACTION.FOLDER and e.action ~= Entry.ACTION.BUY and not seen[id] and not on_device(e) then
+            seen[id] = true
+            picked[#picked + 1] = e
+            size = size and type(e.size) == "number" and size + e.size or nil
+        end
+    end
+    if #picked == 0 then size = nil end
+    return picked, size
 end
 
 local cache

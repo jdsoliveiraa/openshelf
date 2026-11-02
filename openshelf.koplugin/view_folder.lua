@@ -15,6 +15,9 @@ pages it holds in the background and repaints (it never turns Wi-Fi on for
 that). A folder never listed is fetched from page 1 (App.openFolder asked
 for Wi-Fi first).
 
+Footer: page label, Download all (download_all.lua; Cancel downloads while
+its files are on their way), Load more.
+
 Title = folder name; a tap on it lists the folder views this one was listed
 from (root first, nearest last; picking one closes every view above it),
 then Refresh, which forces that refetch. Back / chevron = up one level (the
@@ -42,10 +45,12 @@ local NetworkMgr = require("ui/network/manager")
 local UIManager = require("ui/uimanager")
 local _ = require("gettext")
 local N_ = _.ngettext
+local Screen = require("device").screen
 local T = require("ffi/util").template
 
 local App = require("app")
 local Catalog = require("catalog")
+local DownloadAll = require("download_all")
 local Downloader = require("downloader")
 local FolderCache = require("openshelf_foldercache")
 local Folders = require("openshelf_folders")
@@ -180,6 +185,52 @@ end
 
 function FolderView:failedMessage()
     return _("Could not open this folder.")
+end
+
+-- Download all (download_all.lua) before Load more, once the folder is
+-- listed: "Cancel downloads" while files it queued are on their way.
+function FolderView:footerButtons()
+    local buttons = ListView.footerButtons(self)
+    if not self.pager:loaded() then return buttons end
+    local state = DownloadAll.busy(self.provider_id, self.folder)
+    self.download_all_state = state
+    local w = Screen:scaleBySize(150)
+    local b
+    if state == "loading" then
+        b = { text = _("Listing…"), w = w }
+    elseif state == "queued" then
+        b = { text = _("Cancel downloads"), w = w, on_tap = function()
+            DownloadAll.cancel(self.provider_id, self.folder)
+            self:rebuild()
+        end }
+    else
+        b = { text = _("Download all"), w = w, on_tap = function() self:downloadAll() end }
+    end
+    table.insert(buttons, 1, b)
+    return buttons
+end
+
+--- Queue every file directly in this folder. Pages Download all fetched
+--- (and cached) join the view.
+function FolderView:downloadAll()
+    DownloadAll.start{
+        provider_id = self.provider_id, folder = self.folder, dir = self.dir,
+        on_change = function()
+            if self.closed then return end
+            local copy = Folders.cache():open(self.provider_id, self:locator())
+            if copy and copy.pages > self.pager.page and not self.pager.loading then self:showCopy(copy) end
+            self:rebuild()
+        end,
+    }
+end
+
+-- Also repaint when the footer's Download all state changed (its last file
+-- finished, or a hold elsewhere queued this folder).
+function FolderView:onDownloadEvent(event, entry, state)
+    ListView.onDownloadEvent(self, event, entry, state)
+    if event ~= "progress" and DownloadAll.busy(self.provider_id, self.folder) ~= self.download_all_state then
+        self:rebuildSoon()
+    end
 end
 
 -- A search glyph before list/grid when the provider can search in folders.

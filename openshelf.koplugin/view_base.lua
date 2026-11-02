@@ -91,6 +91,17 @@ function ViewBase:_titleBar()
     }
 end
 
+--- One repaint on the next tick for a burst of events (Download all queues
+--- or cancels a whole folder at once; every view hears each one).
+function ViewBase:rebuildSoon()
+    if self.rebuild_soon then return end
+    self.rebuild_soon = true
+    UIManager:nextTick(function()
+        self.rebuild_soon = nil
+        if not self.closed then self:rebuild() end
+    end)
+end
+
 --- Lay the current page out again. refresh = "ui" (default) | "partial" (page turns).
 function ViewBase:rebuild(refresh)
     if self[1] and self[1].free then self[1]:free() end
@@ -246,6 +257,7 @@ function ViewBase:onExit()
 end
 
 function ViewBase:onCloseWidget()
+    self.closed = true   -- a pending rebuildSoon skips it
     if self.teardown then self:teardown() end
     if self[1] and self[1].free then self[1]:free() end
     -- UIManager:close repaints what's below but drops a nil refresh (#25), so

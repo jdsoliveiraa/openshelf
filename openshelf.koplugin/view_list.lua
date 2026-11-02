@@ -220,20 +220,28 @@ function ListView:buildRows()
         for __, r in ipairs(self:emptyRows()) do rows[#rows + 1] = r end
     end
 
-    -- footer: page label, "Load more" on the last page while the list has
-    -- more (a folder's first page is fetched by the view, not the button)
+    -- footer: page label, then footerButtons() at the right end
     local label = total > 1 and T(_("Page %1 of %2"), self.page, total) or ""
     local items = { P.text(label, 13, { color = P.DARK_GRAY }) }
     local hits = {}
-    if self.pager and self.pager.has_more and self.pager:loaded() and self.page == total then
-        local bw, bh = Screen:scaleBySize(120), Screen:scaleBySize(32)
-        local lw = items[1]:getSize().w
-        items[#items + 1] = P.hspace(math.max(0, w - 2 * pad - lw - bw))
-        if self.pager.loading then
-            items[#items + 1] = P.box(bw, bh, P.text(_("Loading…"), 14, { color = P.DARK_GRAY }), "center")
-        else
-            items[#items + 1] = P.button(_("Load more"), bw, bh, { size = 14 })
-            hits[#hits + 1] = { x = w - pad - bw, w = bw, on_tap = function() self:loadMore() end }
+    local footer_buttons = self:footerButtons()
+    if #footer_buttons > 0 then
+        local bh = Screen:scaleBySize(32)
+        local widths = 0
+        for __, b in ipairs(footer_buttons) do widths = widths + (b.w or Screen:scaleBySize(120)) end
+        widths = widths + (#footer_buttons - 1) * pad
+        items[#items + 1] = P.hspace(math.max(0, w - 2 * pad - items[1]:getSize().w - widths))
+        local bx = w - pad - widths
+        for i, b in ipairs(footer_buttons) do
+            local bw = b.w or Screen:scaleBySize(120)
+            if i > 1 then items[#items + 1] = P.hspace(pad) end
+            if b.on_tap then
+                items[#items + 1] = P.button(b.text, bw, bh, { size = 14 })
+                hits[#hits + 1] = { x = bx, w = bw, on_tap = b.on_tap }
+            else
+                items[#items + 1] = P.box(bw, bh, P.text(b.text, 14, { color = P.DARK_GRAY }), "center")
+            end
+            bx = bx + bw + pad
         end
     end
     rows[#rows + 1] = {
@@ -241,6 +249,17 @@ function ListView:buildRows()
         h = footer_h, hits = hits,
     }
     return rows
+end
+
+--- Buttons at the right end of the footer, left to right: { text, on_tap,
+--- w = width (default 120 scaled) }; one without on_tap is grey text. Here:
+--- "Load more" on the last page while the list has more (a list that starts
+--- with nothing loaded fetches its first page itself, not by this button).
+function ListView:footerButtons()
+    local pager = self.pager
+    if not (pager and pager.has_more and pager:loaded() and self.page == self.total_pages) then return {} end
+    if pager.loading then return { { text = _("Loading…") } } end
+    return { { text = _("Load more"), on_tap = function() self:loadMore() end } }
 end
 
 --- One page in a job: on_done(entries, has_more) / on_error(err). Returns
@@ -344,7 +363,7 @@ function ListView:onDownloadEvent(event, entry, state)
             text = T(_("Download failed: %1\n\n%2"), entry.title or "", state and state.err or ""),
         })
     end
-    self:rebuild()
+    self:rebuildSoon()
 end
 
 return ListView
