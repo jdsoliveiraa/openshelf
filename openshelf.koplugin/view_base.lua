@@ -91,7 +91,6 @@ function ViewBase:_titleBar()
     }
 end
 
---- Lay the current page out again. refresh = "ui" (default) | "partial" (page turns).
 --- One repaint on the next tick for a burst of events (Download all queues
 --- or cancels a whole folder at once; every view hears each one).
 function ViewBase:rebuildSoon()
@@ -103,6 +102,7 @@ function ViewBase:rebuildSoon()
     end)
 end
 
+--- Lay the current page out again. refresh = "ui" (default) | "partial" (page turns).
 function ViewBase:rebuild(refresh)
     if self[1] and self[1].free then self[1]:free() end
     self.hits = {}

@@ -887,6 +887,8 @@ at(3, function()
     check("a provider that ignores page ends the listing: Download 3 files? (no sizes -> the count only)",
         box and box.text == "Download 3 files?", box and box.text)
     check("…and the folder is not left Listing…", require("download_all").busy("folders_demo", { locator = { folder = "emu-stuck" } }) == nil)
+    local copy = Folders.cache():open("folders_demo", { folder = "emu-stuck" })
+    check("…and the repeated page is not cached", copy and copy.pages == 1, copy and copy.pages)
     if box then UIManager:close(box) end
 end, "stuck folder")
 at(1, function()

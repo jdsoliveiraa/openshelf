@@ -366,5 +366,4 @@ function ListView:onDownloadEvent(event, entry, state)
     self:rebuildSoon()
 end
 
-
 return ListView

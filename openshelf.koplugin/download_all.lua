@@ -45,34 +45,40 @@ local function key(id, folder)
     return FolderCache.key(id, folder and folder.locator)
 end
 
--- Every row of a folder: its cached pages, then the rest, each fetched in a
--- job and cached. A page that adds no row not seen yet ends it even if it
--- says has_more (a provider that ignores `page` would list forever).
+-- Every row of a folder, once: its cached pages, then the rest, each
+-- fetched in a job and cached. A fetched page with no row this run hasn't
+-- fetched yet ends it, uncached, even if it says has_more: a provider that
+-- ignores `page` repeats itself and would list forever. (Rows already in
+-- the cache don't count: a listing that shifted since must still go on.)
 local function load_all(id, locator, on_done, on_error)
     local cache = Folders.cache()
     local copy = cache:open(id, locator)
-    local rows, seen = {}, {}
-    local function add(entries)
-        local added = 0
-        for __, e in ipairs(entries) do
-            local eid = Entry.id(e)
-            if not seen[eid] then
-                seen[eid] = true
-                rows[#rows + 1] = e
-                added = added + 1
-            end
+    local rows, seen, fetched = {}, {}, {}
+    local function add(e)
+        local eid = Entry.id(e)
+        if not seen[eid] then
+            seen[eid] = true
+            rows[#rows + 1] = e
         end
-        return added
     end
-    add(copy and copy.entries or {})
+    for __, e in ipairs(copy and copy.entries or {}) do add(e) end
     local page, has_more = copy and copy.pages or 0, not copy or copy.has_more
     local function step()
         if not has_more then return on_done(rows) end
         local p = page + 1
         Jobs.runPage(Folders.pageTask(id, locator, p), function(entries, more)
+            local fresh = 0
+            for __, e in ipairs(entries) do
+                local eid = Entry.id(e)
+                if not fetched[eid] then
+                    fetched[eid] = true
+                    fresh = fresh + 1
+                end
+                add(e)
+            end
+            if more and fresh == 0 then return on_done(rows) end
             cache:putPage(id, locator, p, entries, more)
-            local added = add(entries)
-            page, has_more = p, more and added > 0
+            page, has_more = p, more
             step()
         end, on_error)
     end
