@@ -73,8 +73,7 @@ function FolderView:setup()
     if self.folder then
         self.dir = paths:dirFor(self.folder)
     else
-        local p = Catalog.byId(self.provider_id)
-        self.dir = paths:rootDir(p and p.name or self.provider_id)
+        self.dir = paths:rootDir(Catalog.nameOf(self.provider_id) or self.provider_id)
     end
     local copy = Folders.cache():open(self.provider_id, self:locator())
     if not copy then

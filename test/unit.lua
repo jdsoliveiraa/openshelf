@@ -2363,7 +2363,7 @@ eq(paths:dirOf(folder{ title = "Gothic" }), "UCStudent/Gothic",
 
 -- Files without a record: their path > the listing folder's directory > flat.
 eq(paths:dirOf(file{ path = { "SS", "T" } }, "UCStudent/Elsewhere"), "UCStudent/SS/T",
-   "a file's own path wins over the folder that listed_rows it")
+   "a file's own path wins over the folder that listed it")
 eq(paths:dirOf(file{}, "UCStudent/SS/T"), "UCStudent/SS/T", "else the listing folder's directory")
 eq(paths:dirOf(file{}), "", "else flat (search, shelf, scoped search)")
 eq(paths:dirOf(file{ path = {} }), "UCStudent", "a file with an empty path: P")
@@ -2379,8 +2379,8 @@ check(#cut <= 120 and cut == string.rep("é", 60), "a long segment is cut at 120
 -- Stamps: copies, so caches keep rows unstamped.
 local listed_rows = { file{ id = "x" }, folder{ title = "Sub", id = "s" } }
 local shown = paths:stamped(listed_rows, "UCStudent/T")
-eq(shown[1].dir, "UCStudent/T", "a listed_rows file is stamped with the folder's directory")
-eq(shown[2].dir, "UCStudent/T/Sub", "a listed_rows folder row is stamped too")
+eq(shown[1].dir, "UCStudent/T", "a listed file is stamped with the folder's directory")
+eq(shown[2].dir, "UCStudent/T/Sub", "a listed folder row is stamped too")
 eq(listed_rows[1].dir, nil, "the rows themselves stay unstamped")
 eq(paths:dirFor(shown[2]), "UCStudent/T/Sub", "dirFor reads the stamp")
 eq(paths:dirFor(folder{ title = "Sub" }), "UCStudent/Sub", "…else works it out from the row alone")
@@ -2435,6 +2435,50 @@ eq(paths:target(twin, root, owned), root .. "/UCStudent/SS/T/Aula 1 (2).pdf",
 eq(flib:ownedPaths(Entry.id(aula))[full:lower()], nil, "an entry's own record never owns its name against it")
 eq(paths:target(file{ title = "Aula 2", id = "a2", path = { "SS", "T" } }, root, owned),
    root .. "/UCStudent/SS/T/Aula 2.pdf", "suffix only against another record's path: a free name stays")
+
+-- Target with records, and ✓ (Paths:targetIn / Paths:status: what
+-- Downloader.target and App.bookStatus run). size_of stands in for the disk.
+local disk = {}
+local function size_of(path) return disk[path] end
+local slib_store
+local slib = Library.new{ load = function() return slib_store end, save = function(d) slib_store = d end }
+local recorded = root .. "/Old place/Emma.pdf"
+slib:add(file{ title = "Emma", author = "Jane Austen", id = "emma" }, recorded)
+disk[recorded] = 100
+local via_search = file{ title = "Emma", author = "Jane Austen", id = "emma" }   -- no path: flat
+local via_folder = paths:stamped({ file{ title = "Emma", author = "Jane Austen", id = "emma" } }, "UCStudent/T")[1]
+local via_path = file{ title = "Emma", author = "Jane Austen", id = "emma", path = { "SS" } }
+eq((paths:targetIn(via_search, root, slib)), recorded, "a record's path is the target: found by search")
+eq((paths:targetIn(via_folder, root, slib)), recorded, "…listed in a folder view")
+eq((paths:targetIn(via_path, root, slib)), recorded, "…or with a path of its own")
+local st = paths:status(via_folder, root, slib, size_of)
+check(st.downloaded and st.target == recorded and not st.missing and st.record, "recorded and on disk -> ✓")
+disk[recorded] = nil
+disk[root .. "/UCStudent/T/Emma.pdf"] = 50   -- where the row would land without a record
+st = paths:status(via_folder, root, slib, size_of)
+check(not st.downloaded and st.missing and st.target == recorded,
+      "recorded but gone -> missing, no ✓, and no fallback to another file of that name", st.target)
+-- an unrecorded file at the target is this entry's copy: ✓, not suffixed (a download replaces it)
+local aula9 = paths:stamped({ file{ title = "Aula 9", id = "a9" } }, "UCStudent/T")[1]
+disk[root .. "/UCStudent/T/Aula 9.pdf"] = 10
+st = paths:status(aula9, root, slib, size_of)
+check(st.target == root .. "/UCStudent/T/Aula 9.pdf" and st.downloaded and not st.missing and not st.record,
+      "an unrecorded file at the target counts as the entry's copy (✓), its name not suffixed", st.target)
+-- once that file is recorded, its never-downloaded twin gets (2) and no ✓
+slib:add(aula9, root .. "/UCStudent/T/Aula 9.pdf")
+local twin9 = paths:stamped({ file{ title = "Aula 9", id = "a9-twin" } }, "UCStudent/T")[1]
+st = paths:status(twin9, root, slib, size_of)
+check(st.target == root .. "/UCStudent/T/Aula 9 (2).pdf" and not st.downloaded,
+      "the twin of a recorded same-named file: target (2), no ✓", st.target)
+eq((paths:targetIn(aula9, root, slib)), root .. "/UCStudent/T/Aula 9.pdf", "…while the recorded one keeps its name")
+eq(paths:fileName(file{ title = "Aula 1.pdf." }, true), "Aula 1.pdf", "a title ending in .<ext>. is not extended either")
+
+-- A provider never places files: `dir` is the host's stamp.
+local planted = Entry.new{ title = "X", locator = { url = "https://p/x" } }
+planted.dir = "../../etc"
+local planted_out = Catalog.stamp({ api = 2, id = "planter", name = "Planter" }, { planted })
+eq(planted_out[1].dir, nil, "Catalog.stamp drops a dir a provider set")
+eq(paths:target(planted_out[1], root, {}), root .. "/Unknown - X.epub", "…so the row lands flat in OpenShelf/")
 end)()
 
 ---------------------------------------------------------------------------

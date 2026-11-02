@@ -14,6 +14,8 @@ device, a copy of it in the tests).
   paths:fileName(entry, in_dir)          -> "<Title>.<ext>" in a directory, "<Author> - <Title>.<ext>" flat
   Paths.withSuffix(name, n)              -> "Aula 1 (2).pdf"
   paths:target(entry, root, owned)       -> the absolute target of an entry without a record
+  paths:targetIn(entry, root, library)   -> its record's path, else target() against the others
+  paths:status(entry, root, library, size_of) -> { target, downloaded (✓), missing, record }
 
 Directories, with P = "<provider name>" (DESIGN.md §12.8):
   the root -> P (the root title is never a segment)
@@ -27,6 +29,8 @@ Only rows a folder view lists need a stamp (their directory depends on the
 route that reached the folder); every other row's directory follows from
 the row alone. Caches keep rows unstamped: `stamped` returns copies.
 --]]
+local Entry = require("entry")
+
 local Paths = {}
 Paths.__index = Paths
 
@@ -69,7 +73,7 @@ function Paths:dirOf(entry, listing_dir)
         with_path = p
         for __, t in ipairs(entry.path) do with_path = join(with_path, self:segment(t)) end
     end
-    if entry.action == "folder" then
+    if entry.action == Entry.ACTION.FOLDER then
         local title = self:segment(entry.title)
         if with_path then return join(with_path, title) end
         if listing_dir then return join(listing_dir, title) end
@@ -96,8 +100,9 @@ end
 
 function Paths:fileName(entry, in_dir)
     local ext = entry.format or "epub"
-    local base = in_dir and (entry.title or "")
-        or string.format("%s - %s", entry.author or "Unknown", entry.title or "book")
+    -- trailing dots and spaces would go anyway ("Aula 1.pdf." is Aula 1.pdf)
+    local title = (entry.title or (in_dir and "" or "book")):gsub("[.%s]+$", "")
+    local base = in_dir and title or string.format("%s - %s", entry.author or "Unknown", title)
     local dot_ext = "." .. ext:lower()
     if base:lower():sub(-#dot_ext) ~= dot_ext then base = base .. "." .. ext end
     local name = self.safe(base, nil, Paths.NAME_LIMIT)
@@ -125,6 +130,26 @@ function Paths:target(entry, root, owned)
         path = base .. "/" .. Paths.withSuffix(name, n)
     end
     return path
+end
+
+--- The target of `entry` given the library (library.lua): its record's path
+--- whenever it has one, wherever the row was found (Download again, hold,
+--- Download all); else target() against every other record's path.
+--- Returns the path and the record.
+function Paths:targetIn(entry, root, library)
+    local rec = library:find(entry)
+    if rec and type(rec.path) == "string" then return rec.path, rec end
+    return self:target(entry, root, library:ownedPaths(Entry.id(entry))), rec
+end
+
+--- ✓ for a file row: a non-empty file at its target (size_of(path) ->
+--- bytes|nil). An unrecorded file there is this entry's own copy; the twin
+--- of a recorded same-named file has its own target, " (2)", so no ✓.
+--- missing = recorded, but nothing at the recorded path.
+function Paths:status(entry, root, library, size_of)
+    local target, rec = self:targetIn(entry, root, library)
+    local size = size_of(target)
+    return { target = target, downloaded = size ~= nil, missing = rec ~= nil and size == nil, record = rec }
 end
 
 return Paths

@@ -92,18 +92,13 @@ end
 function App.bookStatus(entry)
     local Entry = require("entry")
     if entry.action == Entry.ACTION.FOLDER then return { downloaded = false, missing = false } end
-    -- ✓ = a file at the entry's target (DESIGN.md §12.8): the recorded path
-    -- when there is a record, else the name a download would take now, so an
-    -- unrecorded file there counts as this entry's copy, and the twin of a
-    -- recorded same-named file (whose target gets " (2)") has none.
-    local rec = App.library():find(entry)
-    local path = Downloader.target(entry)
-    local size = file_size(path)
+    -- ✓ = a file at the entry's target (DESIGN.md §12.8, Paths:status)
+    local st = Downloader.paths:status(entry, Downloader.dirPath(), App.library(), file_size)
     return {
-        downloaded = size ~= nil,
-        path = size and path or nil,
-        missing = (rec ~= nil) and size == nil,
-        record = rec,
+        downloaded = st.downloaded,
+        path = st.downloaded and st.target or nil,
+        missing = st.missing,
+        record = st.record,
         dl = Downloader.state(entry),
     }
 end

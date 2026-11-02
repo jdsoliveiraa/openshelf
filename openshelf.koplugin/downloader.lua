@@ -53,10 +53,8 @@ end
 --- the first name in its directory no other record owns.
 function Downloader.target(entry)
     local library = Downloader.library and Downloader.library()
-    local rec = library and library:find(entry)
-    if rec and type(rec.path) == "string" then return rec.path end
-    local owned = library and library:ownedPaths(Entry.id(entry)) or {}
-    return Downloader.paths:target(entry, Downloader.dirPath(), owned)
+    if not library then return Downloader.paths:target(entry, Downloader.dirPath(), {}) end
+    return (Downloader.paths:targetIn(entry, Downloader.dirPath(), library))
 end
 
 --- Path if this entry's file is on disk (non-empty), else nil.
